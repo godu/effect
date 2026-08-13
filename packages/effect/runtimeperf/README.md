@@ -4,6 +4,7 @@ This harness measures focused synchronous runtime paths in fresh Node
 processes. It supports:
 
 - focused Effect Schema diagnostics;
+- native Arbitrary comparisons against the legacy fast-check v4 implementation;
 - the upstream Effect, Valibot and Zod benchmark matrix;
 - paired comparisons between Git revisions or the current working tree.
 
@@ -36,6 +37,7 @@ Select a suite, fixture, shared scenario, tier, family or implementation:
 
 ```sh
 pnpm runtimeperf schema
+pnpm runtimeperf arbitrary
 pnpm runtimeperf object-32-valid
 pnpm runtimeperf schema/object-32-valid-effect
 pnpm runtimeperf --family arrays
@@ -83,6 +85,28 @@ template literals, unions, records, transformations, optional properties,
 adapters, recursion and cold paths. The `schema-benchmarks` suite contains the
 complete timing matrices exposed by the upstream Effect, Valibot and Zod
 adapters.
+
+The `arbitrary` suite compares public end-to-end APIs in separate processes. It
+measures derivation through the first recursive sample, steady-state recursive
+sampling, fixed-length string generation to exercise constraint pushdown,
+bounded Number generation, a rare residual filter, a fixed-length unique array,
+and literal sampling as a runner baseline. It also measures a passing property,
+a failure that shrinks from `1000` to `1`, and replay of that failure. The
+recursive distributions are implementation-defined, so the fixtures use
+implementation-specific size settings and validate a comparable total node
+count for the fixed seed. The bounded Number case is a throughput comparison,
+not distribution parity: native selects among 64-bit IEEE-754 representations,
+while the legacy Schema compiler uses `fast-check`'s 32-bit `float`. Replay is an
+end-to-end public API comparison, but the work is not identical: native replay
+verifies the original failure and its full shrink path, while fast-check can
+start directly from its recorded path.
+
+An impossible Schema filter is deliberately not a cross-engine timing case.
+The native runner reports bounded exhaustion, while the legacy arbitrary is
+built with `fast-check`'s `Arbitrary.filter` and does not return from generation
+when no value can satisfy the predicate. Native exhaustion remains covered by
+the Arbitrary tests instead of placing a permanently blocking fixture in the
+performance harness.
 
 Zod parsing cases import `zod/v4` and call `safeParse` with `{ jitless: true }`;
 its Standard Schema and codec cases use their native APIs. Valibot uses the

@@ -69,6 +69,7 @@ export function collectBrands(annotations: Schema.Annotations.Annotations | unde
 export const annotationExcludedKeys = new Set([
   SENTINELS_ANNOTATION_KEY,
   STRUCTURAL_ANNOTATION_KEY,
+  "~toArbitrary",
   "representation",
   "arbitrary",
   "brands",

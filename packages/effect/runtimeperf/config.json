@@ -12,6 +12,213 @@
   },
   "suites": [
     {
+      "name": "arbitrary",
+      "fixtures": [
+        {
+          "file": "suites/arbitrary/fixtures/native.ts",
+          "defaults": {
+            "tier": 1,
+            "implementation": "effect",
+            "family": "arbitrary",
+            "astTags": [
+              "Objects",
+              "Arrays",
+              "String",
+              "Number",
+              "Declaration",
+              "Suspend"
+            ],
+            "path": "valid"
+          },
+          "cases": [
+            {
+              "name": "cold-recursive-first-sample-native",
+              "export": "coldRecursiveFirstSample",
+              "scenario": "arbitrary-cold-recursive-first-sample",
+              "operation": "derive-and-sample",
+              "path": "cold",
+              "size": 1
+            },
+            {
+              "name": "recursive-sample-32-native",
+              "export": "recursiveSample32",
+              "scenario": "arbitrary-recursive-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "constrained-string-sample-128-native",
+              "export": "constrainedStringSample128",
+              "scenario": "arbitrary-constrained-string-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "String"
+              ],
+              "size": 128
+            },
+            {
+              "name": "bounded-number-sample-128-native",
+              "export": "boundedNumberSample128",
+              "scenario": "arbitrary-bounded-number-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "rare-filter-sample-32-native",
+              "export": "rareFilterSample32",
+              "scenario": "arbitrary-rare-filter-sample-32",
+              "operation": "sample",
+              "astTags": [
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "unique-array-sample-32-native",
+              "export": "uniqueArraySample32",
+              "scenario": "arbitrary-unique-array-sample-32",
+              "operation": "sample",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "literal-sample-128-native",
+              "export": "literalSample128",
+              "scenario": "arbitrary-literal-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "check-pass-100-native",
+              "export": "checkPass100",
+              "scenario": "arbitrary-check-pass-100",
+              "operation": "check",
+              "astTags": [
+                "Number"
+              ],
+              "size": 100
+            },
+            {
+              "name": "check-falsify-shrink-native",
+              "export": "checkFalsifyAndShrink",
+              "scenario": "arbitrary-check-falsify-shrink",
+              "operation": "check-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "check-replay-native",
+              "export": "checkReplay",
+              "scenario": "arbitrary-check-replay",
+              "operation": "replay",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            }
+          ]
+        },
+        {
+          "file": "suites/arbitrary/fixtures/fast-check-v4.ts",
+          "defaults": {
+            "tier": 1,
+            "implementation": "fast-check-v4",
+            "family": "arbitrary",
+            "astTags": [],
+            "path": "valid"
+          },
+          "cases": [
+            {
+              "name": "cold-recursive-first-sample-fast-check-v4",
+              "export": "coldRecursiveFirstSample",
+              "scenario": "arbitrary-cold-recursive-first-sample",
+              "operation": "derive-and-sample",
+              "path": "cold",
+              "size": 1
+            },
+            {
+              "name": "recursive-sample-32-fast-check-v4",
+              "export": "recursiveSample32",
+              "scenario": "arbitrary-recursive-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "constrained-string-sample-128-fast-check-v4",
+              "export": "constrainedStringSample128",
+              "scenario": "arbitrary-constrained-string-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "bounded-number-sample-128-fast-check-v4",
+              "export": "boundedNumberSample128",
+              "scenario": "arbitrary-bounded-number-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "rare-filter-sample-32-fast-check-v4",
+              "export": "rareFilterSample32",
+              "scenario": "arbitrary-rare-filter-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "unique-array-sample-32-fast-check-v4",
+              "export": "uniqueArraySample32",
+              "scenario": "arbitrary-unique-array-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "literal-sample-128-fast-check-v4",
+              "export": "literalSample128",
+              "scenario": "arbitrary-literal-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "check-pass-100-fast-check-v4",
+              "export": "checkPass100",
+              "scenario": "arbitrary-check-pass-100",
+              "operation": "check",
+              "size": 100
+            },
+            {
+              "name": "check-falsify-shrink-fast-check-v4",
+              "export": "checkFalsifyAndShrink",
+              "scenario": "arbitrary-check-falsify-shrink",
+              "operation": "check-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "check-replay-fast-check-v4",
+              "export": "checkReplay",
+              "scenario": "arbitrary-check-replay",
+              "operation": "replay",
+              "path": "failure",
+              "size": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "schema",
       "fixtures": [
         {
