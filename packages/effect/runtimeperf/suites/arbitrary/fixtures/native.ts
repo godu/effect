@@ -118,7 +118,7 @@ export const checkFalsifyAndShrink = () => {
   const arbitrary = Arbitrary.schema(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
-  const program = Arbitrary.check(arbitrary, (value) => value < 0, { runs: 1, seed: 1_711, size })
+  const program = Arbitrary.check(arbitrary, (value) => value < 0, { runs: 1, seed: 139, size })
   return {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {
@@ -136,7 +136,7 @@ export const checkReplay = () => {
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
   const property = (value: number) => value < 0
-  const initial = Effect.runSync(Arbitrary.check(arbitrary, property, { runs: 1, seed: 1_711, size }))
+  const initial = Effect.runSync(Arbitrary.check(arbitrary, property, { runs: 1, seed: 139, size }))
   assert.equal(initial._tag, "Falsified")
   if (initial._tag !== "Falsified") throw new Error("Expected the replay setup to falsify")
   const program = Arbitrary.check(arbitrary, property, { replay: initial.replay })

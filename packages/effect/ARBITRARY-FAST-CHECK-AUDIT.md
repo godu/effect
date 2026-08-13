@@ -96,6 +96,193 @@ simplification/performance tradeoff, not a correctness technique Effect should c
 the branch reveals no additional numeric edge-case handling missing from the current native hardening pass and does not
 require new attribution comments beyond the v4.9.0/pure-rand techniques already attributed.
 
+### Numeric distribution audit — 2026-08-13
+
+fast-check does not have one numeric distribution. It composes an unbiased uniform selection over a discrete domain
+with a run-dependent chance of replacing that domain by a small interval around zero or an endpoint. The runner passes
+the zero-based run number to the property, and
+[`runIdToFrequency`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/check/property/IRawProperty.ts#L92-L95)
+computes
+
+```text
+F(r) = 2 + floor(log10(r + 1))
+```
+
+for non-negative run identifiers. Each numeric arbitrary then takes a biased route when a fresh uniform draw from
+`1...F(r)` equals `1`; this is a probability, not a deterministic selection of every `F(r)`-th sample. The schedule is
+therefore:
+
+| Runs       | Bias factor | Per-number bias probability |
+| ---------- | ----------- | --------------------------- |
+| `0...8`    | 2           | 50%                         |
+| `9...98`   | 3           | 33.333%                     |
+| `99...998` | 4           | 25%                         |
+| `999...`   | 5, then 6…  | 20%, then 16.667%…          |
+
+Across the default 100 runs this produces 34.75 biased numeric decisions in expectation; across 1,000 runs it produces
+259.7, or 25.97%. Across the 100,000-run diagnostic below, the exact expected count is
+`9/2 + 90/3 + 900/4 + 9,000/5 + 90,000/6 + 1/7 = 17,059.642857`, or 17.0596%. `fc.noBias` and the runner's `unbiased`
+option remove this route entirely. Sampling uses the same tossing path and therefore applies bias by default; see
+[`Sampler`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/check/runner/Sampler.ts)
+and
+[`Tosser`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/check/runner/Tosser.ts).
+
+When bias is activated,
+[`biasNumericRange`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/_internals/helpers/BiasNumericRange.ts)
+builds the following inclusive subranges:
+
+- If `min < 0 < max`, it builds `[−L(−min), L(max)]`, `[max − L(max), max]`, and
+  `[min, min + L(−min)]`. The first, zero-adjacent range is selected with probability `2/3` conditional on bias; each
+  endpoint range is selected with probability `1/6`.
+- For a one-sided non-singleton range it builds a range of width `L(max − min) + 1` at each endpoint. The endpoint
+  closer to zero is selected with probability `2/3` conditional on bias and the other with probability `1/3`.
+- Selection inside the chosen subrange remains uniform. Small domains can make the subranges overlap, so their
+  probability masses then add rather than forming a partition.
+
+For `number`-backed integer indexes, `L(v) = floor(log2(v))`. For `bigint`-backed indexes, `L(v)` is the number of
+decimal digits in `v`, not a binary logarithm. The latter makes the double ranges deliberately narrower than the float
+ranges in practice. [`IntegerArbitrary`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/_internals/IntegerArbitrary.ts#L24-L37)
+precomputes these ranges; [`BigIntArbitrary`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/_internals/BigIntArbitrary.ts#L18-L35)
+computes them only on a biased draw.
+
+The important consequence for `float` and `double` is that "uniform" means uniform over the monotone IEEE-754
+representation index, not uniform over arithmetic distance. Each exponent band contains roughly the same number of
+representations, so an unbiased sample broadly spreads mass across exponents. `NaN` is represented by one synthetic
+index immediately outside the effective interval. Excluded bounds shift the effective index by one, while
+`noDefaultInfinity` and `noNaN` remove those respective choices before numeric bias is applied; see
+[`float`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/float.ts)
+and
+[`double`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/double.ts).
+
+The exact default-domain biased intervals are:
+
+| Arbitrary   | Full discrete domain                                   | Zero-adjacent interval  | Low/high endpoint intervals | Conditional weight  |
+| ----------- | ------------------------------------------------------ | ----------------------- | --------------------------- | ------------------- |
+| `integer()` | `−2^31...2^31−1`                                       | `−31...30` (62 values)  | 32 / 31 values              | `2/3`, `1/6`, `1/6` |
+| `bigInt()`  | `−2^255...2^255−1`                                     | `−77...77` (155 values) | 78 / 78 values              | `2/3`, `1/6`, `1/6` |
+| `float()`   | 4,278,190,083 indexes including one `NaN`              | `−30...30` (61 values)  | 31 / 31 values              | `2/3`, `1/6`, `1/6` |
+| `double()`  | 18,437,736,874,454,810,627 indexes including one `NaN` | `−19...19` (39 values)  | 20 / 20 values              | `2/3`, `1/6`, `1/6` |
+
+For the default float domain, a biased draw chooses each signed zero and each smallest signed subnormal with
+probability `2 / (3 × 61) ≈ 1.093%`; it chooses each `NaN`, infinity and extreme finite endpoint with probability
+`1 / (6 × 31) ≈ 0.538%`. For double the corresponding probabilities are `2 / (3 × 39) ≈ 1.709%` and
+`1 / (6 × 20) ≈ 0.833%`. These are conditional on bias and must still be multiplied by `1 / F(r)` for a particular
+run. The bias is thus a contiguous representation-edge strategy: it reliably promotes signed zeros, subnormals,
+infinities, `NaN`, and values adjacent to effective constraints, but it does not maintain a hand-written corpus of
+ordinary values such as `1`, `−1`, or powers of two.
+
+#### Deterministic distribution measurement
+
+A local diagnostic sampled 100,000 values with seed `42` from the public native and legacy Schema seams. It is a
+snapshot for architectural comparison, not a proposed compatibility contract.
+
+For `Int` constrained to `−1,000,000...1,000,000`, the edge classifiers deliberately match fast-check's exact biased
+subranges: low `−1,000,000...−999,981`, zero-adjacent `−19...19`, and high `999,981...1,000,000`. The octiles are
+eight equal-width arithmetic intervals across the complete domain.
+
+| Implementation        | Low band | Zero band | High band | Arithmetic octiles (%)                                         |
+| --------------------- | -------- | --------- | --------- | -------------------------------------------------------------- |
+| Native before bias    | 0.001%   | 0.001%    | 0%        | 12.604, 12.457, 12.477, 12.419, 12.524, 12.676, 12.353, 12.490 |
+| Native with bias      | 2.935%   | 11.440%   | 2.829%    | 13.145, 10.271, 10.254, 16.280, 15.962, 10.626, 10.446, 13.016 |
+| fast-check v4 integer | 2.721%   | 11.310%   | 2.877%    | 13.213, 10.206, 10.325, 16.178, 15.986, 10.437, 10.440, 13.215 |
+
+The pre-bias native implementation was close to uniform. The approved native policy now has the expected mixture:
+unbiased draws preserve broad coverage, while biased draws add mass to the two endpoint octiles and, especially, the
+two central octiles containing `−19...19`. It still produced 81,222 distinct values in the 100,000-value sample.
+
+For `Number` constrained to `2...4`, the low and high classifiers are respectively `value <= 2.00002` and
+`value >= 3.99998`; the quartiles are `[2, 2.5)`, `[2.5, 3)`, `[3, 3.5)`, and `[3.5, 4]`. The legacy Schema compiler
+currently delegates this case to `fc.float`; direct `fc.double` is included to separate that legacy recipe choice from
+fast-check's 64-bit arbitrary.
+
+| Implementation                   | Low edge | High edge | Arithmetic quartiles (%)       |
+| -------------------------------- | -------- | --------- | ------------------------------ |
+| Native before bias               | 0%       | 0.002%    | 25.045, 24.993, 24.878, 25.084 |
+| Native with bias                 | 11.438%  | 5.762%    | 32.146, 20.596, 20.597, 26.661 |
+| Legacy Schema / fast-check float | 11.347%  | 5.347%    | 32.152, 20.980, 21.036, 25.832 |
+| Direct fast-check double         | 11.320%  | 5.586%    | 31.771, 21.013, 20.908, 26.308 |
+
+The native ordered-index distribution is arithmetic-uniform here because `2...4` is one complete binary exponent
+band. Both fast-check variants show the one-sided `2/3` versus `1/3` conditional endpoint preference on top of their
+uniform representation-index route.
+
+For unconstrained `Number`, the diagnostic counted exact `NaN`, negative infinity, positive infinity, either signed
+zero, and finite non-zero values with `abs(value) <= 10^-6`. The categories are intentionally independent and do not
+form a complete histogram.
+
+| Implementation                   | `NaN`  | `−Infinity` | `+Infinity` | Signed zero | Tiny non-zero |
+| -------------------------------- | ------ | ----------- | ----------- | ----------- | ------------- |
+| Native before bias               | 4.185% | 4.198%      | 4.137%      | 0%          | 0%            |
+| Native with bias                 | 0.140% | 0.150%      | 0.132%      | 0.585%      | 51.696%       |
+| Legacy Schema / fast-check float | 0.097% | 0.087%      | 0.086%      | 0.342%      | 45.742%       |
+| Direct fast-check double         | 0.127% | 0.136%      | 0.142%      | 0.592%      | 51.436%       |
+
+The approved implementation removes the ad hoc `1/24` injections and generates the complete non-NaN IEEE-754 domain
+through its ordered representation index, with one synthetic NaN choice. The shared bias policy then targets zero,
+subnormals and representation endpoints. The current native sample is consequently close to direct fast-check double,
+while remaining independently seeded and implemented; 82.667% of its values were in the broad intermediate exponent
+range used by the permanent smoke test.
+
+The v5 development branch preserves all these formulas and probabilities. At
+[`5ebd1f9f`](https://github.com/dubzzz/fast-check/commit/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef),
+the schedule has only moved to
+[`ToFrequency.ts`](https://github.com/dubzzz/fast-check/blob/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef/packages/fast-check/src/check/property/_internals/ToFrequency.ts),
+while `BiasNumericRange`, `IntegerArbitrary`, `BigIntArbitrary`, `float`, and `double` retain the v4 generation logic.
+The diffs are iterator-carrier changes, bigint literal syntax, and removal of captured global aliases, not distribution
+changes. The v5 copies of the float and double end-to-end tests are 98%-similar renames and retain the same assertions;
+see the official
+[`v4.9.0...next-v4_9_0` comparison](https://github.com/dubzzz/fast-check/compare/v4.9.0...next-v4_9_0).
+The branch also resolves fast-check's runtime dependency to the same `pure-rand` 8.4.1 version in its
+[`pnpm-lock.yaml`](https://github.com/dubzzz/fast-check/blob/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef/pnpm-lock.yaml),
+and
+[`Tosser`](https://github.com/dubzzz/fast-check/blob/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef/packages/fast-check/src/check/runner/Tosser.ts)
+still jumps the same generator before passing the same run identifier. The v4 observations above therefore apply to
+the current v5 branch snapshot; reporting a second execution as an independent v5 measurement would be misleading
+when the generating algorithm, random dependency and scheduling are identical.
+
+#### Testing practices worth adopting
+
+fast-check tests this policy at several layers instead of treating a precise output histogram as its public contract:
+
+1. Unit tests inject a fake random source and prove the exact unbiased route, activation draw, preferred-range
+   weighting and selected bounds. Separate property tests prove that every computed biased interval stays inside the
+   requested domain; see
+   [`IntegerArbitrary.spec.ts`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/test/unit/arbitrary/_internals/IntegerArbitrary.spec.ts)
+   and
+   [`BiasNumericRange.spec.ts`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/test/unit/arbitrary/_internals/helpers/BiasNumericRange.spec.ts).
+2. Reusable arbitrary assertions vary seeds, constraints, bias factors and shrink paths to verify determinism, domain
+   validity, context-free shrinkability and strict shrink progress; see
+   [`ArbitraryAssertions.ts`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/test/unit/arbitrary/__test-helpers__/ArbitraryAssertions.ts).
+3. Float and double end-to-end tests compare biased and `noBias` samples over 25,000 runs: every targeted IEEE extreme
+   must occur under bias, must not occur in the unbiased sample, and more than half of both samples must remain in broad
+   intermediate exponent ranges. This checks bug-finding usefulness without fixing exact percentages; see
+   [`DoubleArbitrary.spec.ts`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/test/e2e/arbitraries/DoubleArbitrary.spec.ts)
+   and
+   [`FloatArbitrary.spec.ts`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/test/e2e/arbitraries/FloatArbitrary.spec.ts).
+4. CI chooses and logs a fresh global seed for tests, making invariant tests explore new paths while leaving failures
+   reproducible; see the official
+   [`build-status.yml`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/.github/workflows/build-status.yml#L288-L301)
+   and
+   [`vitest.setup.mjs`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/vitest.setup.mjs).
+
+Effect now has deterministic public-seam tests for coarse bucket occupancy, bounded integer and `BigInt` edges, all
+nine targeted IEEE-754 extremes, and broad intermediate-domain preservation. They deliberately avoid exact
+percentages, which would turn a private search heuristic into an accidental compatibility contract.
+
+#### Resolved Effect decision
+
+The numeric distribution decision is now:
+
+- `Arbitrary` is a bug-finding search strategy rather than a statistically neutral application-data sampler;
+- `sample` and `check` share the same generated sequence;
+- numeric leaves independently decide whether to use an edge range, avoiding lockstep extreme tuples;
+- the v4/v5 run-dependent schedule and numeric range weighting are the initial private, attributed baseline;
+- unbounded `Number` uses the complete ordered double domain plus one NaN choice, with no separate `1/24` injection;
+- the public API promises validity and reproducibility, not exact distribution percentages or controls.
+
+This is an implementation baseline, not seed or distribution parity with fast-check. It can change while the module is
+unstable, provided edge coverage, broad-domain exploration, replay and performance remain measured.
+
 ### Effect conclusion from the v5 snapshot
 
 The current design does not need to pivot for fast-check v5. The branch strengthens four decisions already made:
@@ -115,27 +302,57 @@ evidence, but not a stable interface to port or target.
 The architecture remains viable, but the POC is not ready to replace fast-check. The hardening passes completed
 arbitrary-width unbiased `BigInt` selection, unbiased safe-integer selection, exact ordered IEEE-754 `Number`
 generation and bounds, context-aware numeric shrinking, lower-cost union cross-shrinking, a copyable replay token, and
-work-bounded shrinking. There is no remaining known numeric correctness blocker. Catalog coverage, constructive
-strings and patterns, stack safety, mutable-value semantics, and statistical quality still prevent replacement.
+work-bounded shrinking. There is no remaining known numeric correctness, edge-coverage, or stack-safety blocker for
+the exercised kernel. Catalog coverage and constructive strings and patterns still prevent replacement.
 
 ## Decision matrix
 
-| Area                 | fast-check v4 technique                                                                                                                  | Native POC                                                                                               | Assessment                                                                                                                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Attempt isolation    | Jumps the PRNG before each toss, so each run has a reproducible position                                                                 | Derives an independent state from `(seed, attempt)`                                                      | Keep native; it gives direct random access for replay. Attribution added because the isolation goal is shared.                                                                |
-| Replay               | Stores seed plus a colon-separated initial/shrink path and can start at that path                                                        | Copyable opaque string stores seed, attempt, size and shrink indices                                     | Resolved. Keep the coordinates private and retain the explicit replay-mismatch result.                                                                                        |
-| Integer generation   | Usually samples the full bounded range; periodically biases toward zero and boundaries                                                   | Uses exact rejection sampling over safe-integer ranges; unbounded values retain a size-local range       | Unbiased full-range selection is resolved. Do not clone the exact bias schedule; any edge-case injection remains an explicit Effect distribution decision.                    |
-| Integer shrinking    | Halves toward zero or the nearest bound and records the closest known passing value as context; includes a last-chance retry             | Retains the closest passing value in the private sample tree and converges by halving                    | Resolved. A permanent test for `n < 10` over `0...100` reaches the local boundary `10`.                                                                                       |
-| `BigInt` generation  | Uses `pure-rand`'s arbitrary-width `uniformBigInt`                                                                                       | Draws arbitrary-width unsigned limbs and rejects values outside the exact interval width                 | Resolved. Bounds beyond finite `number` width are covered by a permanent test.                                                                                                |
-| `Number` / double    | Maps every IEEE-754 double except NaN to an ordered bigint index; handles `-0`, subnormals, infinities and exact excluded bounds         | Uses a monotone 64-bit index for constrained intervals and contextual shrinking over that index          | Constraint correctness is resolved. Permanent tests cover signed zero, subnormals, finite extremes, infinities, adjacent exclusive bounds, NaN, and local shrink boundaries.  |
-| Arrays               | Applies length shrinking before element shrinking; tracks per-element contexts; avoids deep recursive materialization                    | Lazily emits structural shrinking before child shrinking                                                 | Direction is good and attribution added. Add deep stack-safety and adversarial shrink tests.                                                                                  |
-| Union / frequency    | Can shrink from a selected branch to the preferred first branch with `withCrossShrink`; depth increases preference for the base branch   | Selects affordable branches uniformly and lazily prepends a shrink toward the lowest-cost productive one | Resolved for structurally cheaper branches. A recursive nullable node now shrinks to `null`; equal-cost branch policy remains intentionally unspecified.                      |
-| Recursive generation | Uses shared depth contexts and progressively biases toward the first/base branch                                                         | Computes SCCs and a least fixed point for finite productivity, then shares a complexity budget           | Keep native. It gives a stronger derivation-time guarantee and handles mutual recursion without exposing depth identifiers.                                                   |
-| Uniqueness           | Uses specialized set builders, bounded consecutive duplicate failures and uniqueness-preserving shrink cleanup                           | Uses `Effect.Equal`, a linear scan per candidate and ten retries per position                            | Correct semantics, but quadratic. Add hash/set-backed builders for equality modes that support them and make the retry bound capacity-aware. Attribution added.               |
-| Filters              | `Arbitrary.filter` retries internally until it finds a value and filters shrink streams                                                  | Generation returns `Discarded`; runner enforces a global bound; invalid shrink nodes promote descendants | Native is safer for Schema. Keep bounded exhaustion and descendant promotion.                                                                                                 |
-| Strings              | Generates printable ASCII graphemes by default, shrinks length and character units, and occasionally injects dangerous JS property names | Generates printable ASCII code units and shrinks length only                                             | Missing professional coverage: add character shrinking and a small Effect-owned edge-case corpus such as `__proto__`, `constructor`, empty and whitespace/control boundaries. |
-| Regex constraints    | Parses regexes to an AST, generates constructively, aggregates adjacent constants and retains a final length filter                      | Pattern metadata is collected but not used constructively yet                                            | Major catalog item. Porting or independently implementing a supported regex subset needs its own scope and attribution/licence review.                                        |
-| Hot paths            | Contains dedicated sync loops, avoids allocations and tests stack safety at depths beyond the JS call stack                              | Uses `Effect.*Eager` in many compiler paths and lazy `Pull`, but lacks adversarial depth tests           | Add stack-safety and allocation benchmarks before expanding the catalog.                                                                                                      |
+| Area                 | fast-check v4 technique                                                                                                                  | Native POC                                                                                                 | Assessment                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Attempt isolation    | Jumps the PRNG before each toss, so each run has a reproducible position                                                                 | Derives an independent state from `(seed, attempt)`                                                        | Keep native; it gives direct random access for replay. Attribution added because the isolation goal is shared.                                                                |
+| Replay               | Stores seed plus a colon-separated initial/shrink path and can start at that path                                                        | Copyable opaque string stores seed, attempt, size and shrink indices                                       | Resolved. Keep the coordinates private and retain the explicit replay-mismatch result.                                                                                        |
+| Integer generation   | Usually samples the full bounded range; periodically biases toward zero and boundaries                                                   | Uses exact rejection sampling plus the private attributed run-dependent edge policy                        | Resolved. Unbounded integers retain a size-local range; constrained intervals preserve broad coverage while targeting zero and both boundaries.                               |
+| Integer shrinking    | Halves toward zero or the nearest bound and records the closest known passing value as context; includes a last-chance retry             | Retains the closest passing value in the private sample tree and converges by halving                      | Resolved. A permanent test for `n < 10` over `0...100` reaches the local boundary `10`.                                                                                       |
+| `BigInt` generation  | Uses `pure-rand`'s arbitrary-width `uniformBigInt` and biased decimal-digit edge ranges                                                  | Draws arbitrary-width unsigned limbs with rejection and applies the attributed edge ranges                 | Resolved. Permanent tests cover arbitrary-width bounds, zero, both endpoints, and broad-domain uniqueness.                                                                    |
+| `Number` / double    | Maps every non-NaN IEEE-754 double to an ordered bigint index and adds one NaN choice                                                    | Uses an independent monotone 64-bit bit-cast index, the same private bias policy, and contextual shrinking | Resolved. Permanent tests cover all nine targeted extremes, broad intermediate values, exact bounds, and local shrinking.                                                     |
+| Arrays               | Applies length shrinking before element shrinking; tracks per-element contexts; avoids deep recursive materialization                    | Lazily emits structural shrinking before child shrinking                                                   | Resolved for the exercised carrier: a permanent test traverses 1,000 lazy child shrinks without overflowing.                                                                  |
+| Union / frequency    | Can shrink from a selected branch to the preferred first branch with `withCrossShrink`; depth increases preference for the base branch   | Selects affordable branches uniformly and lazily prepends a shrink toward the lowest-cost productive one   | Resolved for structurally cheaper branches. A recursive nullable node now shrinks to `null`; equal-cost branch policy remains intentionally unspecified.                      |
+| Recursive generation | Uses shared depth contexts and progressively biases toward the first/base branch                                                         | Computes SCCs and a least fixed point for finite productivity, then shares a complexity budget             | Keep native. It gives a stronger derivation-time guarantee and handles mutual recursion without exposing depth identifiers.                                                   |
+| Uniqueness           | Uses specialized set builders, bounded consecutive duplicate failures and uniqueness-preserving shrink cleanup                           | Uses `Hash.hash` buckets, `Effect.Equal` collision checks, and a requested-length consecutive retry bound  | Correct and expected-linear lookup. Numeric edge bias increases duplicates for large fixed unique collections; capacity-aware retry policy remains future work.               |
+| Filters              | `Arbitrary.filter` retries internally until it finds a value and filters shrink streams                                                  | Generation returns `Discarded`; runner enforces a global bound; invalid shrink nodes promote descendants   | Native is safer for Schema. Keep bounded exhaustion and descendant promotion.                                                                                                 |
+| Strings              | Generates printable ASCII graphemes by default, shrinks length and character units, and occasionally injects dangerous JS property names | Generates printable ASCII code units and shrinks length only                                               | Missing professional coverage: add character shrinking and a small Effect-owned edge-case corpus such as `__proto__`, `constructor`, empty and whitespace/control boundaries. |
+| Regex constraints    | Parses regexes to an AST, generates constructively, aggregates adjacent constants and retains a final length filter                      | Pattern metadata is collected but not used constructively yet                                              | Major catalog item. Porting or independently implementing a supported regex subset needs its own scope and attribution/licence review.                                        |
+| Hot paths            | Contains dedicated sync loops, avoids allocations and tests stack safety at depths beyond the JS call stack                              | Uses `Effect.*Eager`, lazy `Pull`, iterative graph compilation/SCC analysis and scheduler-aware discards   | Permanent tests cover a 5,000-node SCC, a 10,000-node suspend chain, 1,000 child shrinks and interruption across generation/property/shrink.                                  |
+
+### `RegExp` values versus matching strings
+
+fast-check v4.9.0 exposes
+[`stringMatching(regex, { maxLength?, size? }): Arbitrary<string>`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/stringMatching.ts#L29-L46),
+not an arbitrary that generates `RegExp` objects. Its
+[`fast-check-default` public surface](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/fast-check-default.ts#L350-L374)
+exports `stringMatching`, and a source-wide audit found no dedicated `Arbitrary<RegExp>`. Consequently the finite
+source and flag catalog in Effect's existing `Schema.RegExp` annotation is an Effect-owned policy, not fast-check
+parity.
+
+`stringMatching` is constructive rather than a generate-and-filter wrapper. It tokenizes the supplied regexp, adds
+leading or trailing `.*` when the corresponding anchor is absent, clamps the token tree when `maxLength` is specified,
+then composes `constant`, `integer`, `string`, `tuple`, `oneof`, and small negative-class filters. The final
+`maxLength` filter counts Unicode code points. See the
+[`stringMatching` compiler](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/stringMatching.ts#L79-L297),
+[`addMissingDotStar`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/_internals/helpers/SanitizeRegexAst.ts#L1-L118),
+and
+[`clampRegexAst`](https://github.com/dubzzz/fast-check/blob/0d3c2547dce556f72413607849377530d18ea283/packages/fast-check/src/arbitrary/_internals/helpers/ClampRegexAst.ts#L9-L174).
+Shrinking is therefore inherited compositionally: repetitions shrink their length and units, ranges shrink through
+`integer`, alternatives retain their selected `oneof` branch, and concatenations shrink their tuple children. There
+is no separate `RegExp`-object shrinker.
+
+The constructor accepts flags `d`, `g`, `m`, `s`, and `u`, but rejects `i` and `y`. Unicode properties are supported;
+word-boundary assertions, lookarounds, and backreferences are tokenized but rejected during compilation. The current
+v5 preparation snapshot preserves those semantics and the same public API; its
+[`stringMatching` implementation](https://github.com/dubzzz/fast-check/blob/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef/packages/fast-check/src/arbitrary/stringMatching.ts#L16-L283)
+only differs here through the branch-wide removal of captured safe globals. It likewise exports `stringMatching` and
+no dedicated `Arbitrary<RegExp>` from its
+[`public entrypoint`](https://github.com/dubzzz/fast-check/blob/5ebd1f9f3c9972ce98acaf6690ca02f88bb341ef/packages/fast-check/src/fast-check.ts#L185-L200).
 
 ## Confirmed defects and gaps
 
@@ -202,9 +419,9 @@ bounds preserve both signed zeros, exclusive bounds move to the exact adjacent r
 exclude infinities constructively, and impossible or NaN bounds fail during derivation. Selection is exact over each
 compiled constrained index interval. Shrinking performs its binary search in the same ordered space and remembers the
 nearest passing representation, so it can reach a local floating-point failure boundary rather than stopping at an
-arithmetic midpoint. `NaN` remains an explicitly injected case for unconstrained `Number` and shrinks through the
-ordinary target. The unconstrained common-value branch retains its existing size-local arithmetic distribution; moving
-that branch to ordered-index selection or adding boundary frequencies remains a separate distribution decision.
+arithmetic midpoint. For unconstrained `Number`, `NaN` occupies one synthetic index adjacent to the ordinary ordered
+domain and shrinks through the ordinary target. The generator applies the shared numeric edge policy across that
+extended interval, replacing the former size-local arithmetic branch and separate `1/24` injections.
 
 Safe integers also required a discrete correction. Multiplying a random double by the full safe-integer interval loses
 low bits and can make one parity unreachable. The native implementation now partitions the `2^53` possible PRNG
@@ -230,9 +447,8 @@ zero and both bounds. Its string arrays can inject cached slices containing Java
 `__proto__`, `constructor`, `toString`, `key`, and `ref`; see
 [`SlicesForStringBuilder`](https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/SlicesForStringBuilder.ts).
 
-Effect should own a smaller policy tied to Schema domains. The contract should promise neither exact frequencies nor
-fast-check's run-dependent bias schedule. What matters is that ordinary sampling covers representative values while a
-bounded fraction of attempts target boundaries and runtime-sensitive strings.
+Effect now applies the attributed run-dependent policy privately to `Int`, `BigInt`, and `Number`, while keeping exact
+frequencies out of the contract. Runtime-sensitive string slices remain future work.
 
 ### Collection size and recursion interaction
 
@@ -245,28 +461,28 @@ Effect's shared cost budget is a better Schema-level foundation, but the chosen 
 or partition child cost before generation. The POC already does this for later siblings. Permanent tests should cover
 wide recursive arrays and records, not only depth.
 
-### Stack safety and mutable values
+### Stack safety and property purity
 
 fast-check has explicit end-to-end tests that shrink arrays and tuples much deeper than the JavaScript call stack. The
 native `Pull` carrier is lazy and the runner loop is iterative, which is promising, but recursive sample construction
 and codec descendant promotion still need adversarial tests.
 
-fast-check also tracks cloneable values so property mutation does not contaminate later reads or shrink context; see
+fast-check also tracks explicitly cloneable values so their mutation does not contaminate later reads or shrink
+context; see
 [`Value`](https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/arbitrary/definition/Value.ts).
-The Schema-first API currently returns values directly. Before integrating with a general test runner, decide whether
-mutation is unsupported, values are regenerated before every evaluation, or selected mutable built-ins provide a clone
-policy. Silent reuse is unsafe.
+Effect deliberately does not port that protocol in this slice. Properties must treat generated values as immutable;
+the runner does not clone or freeze them. This is documented on the public `check` API because mutation may corrupt
+failure reporting, shrinking, or replay.
 
 ## Techniques intentionally not copied
 
-- The exact `runIdToFrequency` bias schedule is an engine detail and would make Effect distributions track fast-check.
 - `DepthIdentifier` and mutable depth contexts are unnecessary because the Schema compiler owns a complete graph and
   SCC metadata.
 - `Arbitrary.filter`'s unbounded internal retry is inappropriate for Schema; explicit `Discarded` plus bounded
   exhaustion is safer.
 - `canShrinkWithoutContext` exists largely for user-supplied examples and fast-check's public arbitrary protocol. It is
   unnecessary while Effect exposes no arbitrary constructors or examples option.
-- fast-check's clone protocol should not be copied before Effect decides the public semantics of property mutation.
+- fast-check's clone protocol is unnecessary under the explicit property-purity contract.
 - Exact distribution, seed compatibility, shrink order and identical counterexamples are not parity goals.
 
 ## Attribution audit
@@ -280,6 +496,7 @@ Attribution comments have been added next to these current techniques:
 - equal-bucket integer rejection sampling following `pure-rand`'s unbiased-selection principle;
 - monotone IEEE-754 indexing, exact interval selection, and contextual `Number` shrinking corresponding to
   fast-check's `double` and `DoubleHelpers` model;
+- the run-dependent numeric bias schedule, zero/boundary range construction, and conditional range weighting;
 - lazy union cross-shrinking toward the lowest-cost productive branch;
 - arbitrary-width `BigInt` rejection sampling following `pure-rand`'s technique;
 - constructive uniqueness with bounded duplicate retry.
@@ -290,11 +507,11 @@ Effect runner semantics are not derived from fast-check and do not receive fast-
 ## Recommended order of work
 
 The completed hardening items are arbitrary-width `BigInt`, unbiased safe integers, ordered IEEE-754 generation and
-shrinking, lower-cost union cross-shrinking, copyable replay, and evaluation-bounded shrinking. The remaining order is:
+shrinking, lower-cost union cross-shrinking, copyable replay, evaluation-bounded shrinking, cooperative interruption,
+and adversarial stack safety. The remaining order is:
 
-1. Add character shrinking, dangerous-string slices, wide/deep stack-safety tests, mutation tests, and statistical
-   smoke tests.
+1. Add character shrinking and dangerous-string slices.
 2. Only then add specialized Date, URL, RegExp, BigDecimal, bytes, time-zone, and date-time recipes.
 
-Distribution changes in steps 1–2 remain architectural decisions. They should be benchmarked and approved rather than
-silently selected while fixing the correctness blockers.
+Further distribution changes in steps 1–2 remain architectural decisions. They should be benchmarked and approved
+rather than silently selected while fixing correctness blockers.

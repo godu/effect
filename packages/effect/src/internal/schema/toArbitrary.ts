@@ -518,7 +518,7 @@ function base(ast: SchemaAST.AST, path: ReadonlyArray<PropertyKey>): LazyArbitra
         const constraint = ctx.constraint
         const patterns = constraint?.patterns
         return patterns
-          ? fc.oneof(...patterns.map((pattern) => fc.stringMatching(new RegExp(pattern))))
+          ? fc.oneof(...patterns.map((pattern) => fc.stringMatching(new RegExp(pattern.source))))
           : fc.string(lengthToFastCheckConstraints(constraint))
       })
     case "Number":

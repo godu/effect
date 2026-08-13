@@ -399,7 +399,7 @@ describe("SchemaRepresentation.toRepresentation", () => {
                 payload: { source: "^[A-Z]", flags: "" }
               },
               annotations: {
-                arbitrary: { constraint: { patterns: ["^[A-Z]"] } },
+                arbitrary: { constraint: { patterns: [{ source: "^[A-Z]", flags: "" }] } },
                 expected: "a string matching the RegExp ^[A-Z]"
               },
               aborted: false

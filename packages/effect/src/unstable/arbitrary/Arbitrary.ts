@@ -242,6 +242,11 @@ export function sample<A>(
  * Returning `false` and failing an Effect are shrinkable falsifications. Defects and interruption continue through the
  * returned Effect instead of becoming `CheckResult` values.
  *
+ * **Gotchas**
+ *
+ * Properties must treat generated values as immutable. The runner does not clone values before evaluation, so
+ * mutation can change reported counterexamples or interfere with shrinking and replay.
+ *
  * @category running
  * @since 4.0.0
  */

@@ -497,7 +497,14 @@ Property semantics are fixed:
 - `false` or `Effect.succeed(false)` is a shrinkable falsification;
 - `Effect.fail(error)` is a shrinkable typed property error;
 - defects and synchronously thrown exceptions remain defects;
-- fiber interruption propagates as interruption and is not converted into a `CheckResult`.
+- fiber interruption propagates as interruption and is not converted into a `CheckResult`;
+- properties must treat generated values as immutable.
+
+The runner does not clone a value before passing it to a property. This keeps the kernel small and avoids inventing a
+universal clone protocol for Schema declarations, class instances, collections, aliased structures, and values decoded
+through codecs. Mutating a sample is unsupported because a generated value or one of its children may also be retained
+for failure reporting, shrinking, or replay. This is a property contract, not a runtime check; the runner does not
+freeze values or attempt to detect mutation.
 
 The first runner is sequential. Parallel checking and scheduler-dependent winner selection are outside the vertical
 slice. Deterministic per-attempt PRNG splitting is already part of the sequential runner.
@@ -628,12 +635,13 @@ The slice does not claim support for every Schema AST tag, every regular express
 built-in declarations, public custom arbitrary construction, Vitest, TestSchema migration, parallel checking, or
 formatted reports. An unsupported deterministic AST or Declaration fails immediately rather than silently degrading.
 
-The numeric substrate is no longer a simplified constraint placeholder. `Int` selects without bias across the complete
-safe integer domain and rejects out-of-domain constraints. Constrained `Number` intervals map non-NaN IEEE-754 values
-to a monotone 64-bit index, use exact adjacent representations for exclusive bounds, preserve signed zero, support
-subnormals and infinities, and shrink with a nearest-passing index context. This establishes constraint and shrink
-correctness, not distribution parity with fast-check: the unconstrained common-value distribution and boundary
-frequencies remain Effect-owned policies to decide separately.
+The numeric substrate is no longer a simplified constraint placeholder. `Int` selects without modulo bias across the
+complete safe integer domain and rejects out-of-domain constraints. Constrained `Number` intervals map non-NaN
+IEEE-754 values to a monotone 64-bit index, use exact adjacent representations for exclusive bounds, preserve signed
+zero, support subnormals and infinities, and shrink with a nearest-passing index context. Numeric generation now uses
+the private attributed fast-check v4/v5 run schedule and edge-range weighting as its initial bug-finding baseline.
+Unbounded `Number` covers the complete double representation interval plus one NaN choice instead of using ad hoc
+`1/24` injections. Exact frequencies remain outside the public contract.
 
 ### Suggested file layout
 
@@ -745,12 +753,13 @@ Measured on the implemented slice with the two materialized fixtures:
 | Fixture                    | Minified + gzip |
 | -------------------------- | --------------: |
 | fast-check v4 materialized |        78.91 KB |
-| native `Arbitrary.schema`  |        26.67 KB |
-| native minus fast-check    |       -52.24 KB |
+| native `Arbitrary.schema`  |        27.79 KB |
+| native minus fast-check    |       -51.12 KB |
 
-The native fixture is approximately 66.2% smaller. Kernel hardening added 0.71 KB to the initial 25.96 KB native
-measurement. The subsequent numeric hardening did not change the rounded 26.67 KB result; because the resulting
-fixture remains substantially smaller, no composition analysis was needed for this gate.
+The native fixture is approximately 64.8% smaller. Kernel hardening added 1.83 KB to the initial 25.96 KB native
+measurement; the final numeric edge policy accounts for 0.96 KB and the stack-safety/interruption pass for 0.16 KB of
+that increase. Because the resulting fixture remains substantially smaller, no composition analysis was needed for
+this gate.
 
 ### Runtime performance baseline
 
@@ -970,6 +979,49 @@ Exact test command paths should follow the package scripts at implementation tim
 
 Exported runtime and type changes require a patch changeset for `effect`.
 
+## Numeric bias runtime results
+
+The approved numeric edge policy was measured against the preceding native implementation with nine alternating
+base/head rounds, 500 ms per observation and a 150 ms warmup. These are implementation diagnostics, not public
+performance guarantees:
+
+| Scenario                         |                   Native change | Interpretation                                                                                              |
+| -------------------------------- | ------------------------------: | ----------------------------------------------------------------------------------------------------------- |
+| bounded `Number`, 128 samples    |   `-6.11%` (`-10.29%...-3.08%`) | Precomputing the ordered IEEE interval more than pays for the extra bias decision.                          |
+| rare numeric filter, 32 samples  |  `-15.39%` (`-19.80%...-9.36%`) | Zero- and edge-adjacent values satisfy the fixture's predicate more often, reducing discards.               |
+| passing `Int` property, 100 runs | `+20.85%` (`+11.53%...+23.30%`) | The additional per-leaf bias decision is visible when generation and the property are otherwise very cheap. |
+| fixed unique array, 32 values    | `+34.65%` (`+27.89%...+45.84%`) | Edge bias intentionally repeats a small set of values, so constructive uniqueness performs more retries.    |
+
+In separate five-round cross-engine diagnostics, native bounded `Number` took `66.28 us` versus fast-check v4's
+`90.17 us`, and the passing check took `47.07 us` versus `63.87 us`. The unique fixture took `499.36 us` versus
+`453.70 us`, making it the measured exception. These timings do not imply equivalent algorithms or distributions;
+the harness validates only comparable work and output invariants.
+
+No correctness concession produced the faster cases: ordered-domain validity, broad coverage, shrinking and replay
+remain intact. The unresolved architectural question is whether a unique collection should inherit the full item bias
+or attenuate it to reduce duplicates. The current implementation keeps the same leaf policy in every context; changing
+it requires an explicit decision because it would make a leaf's search distribution depend on its parent container.
+
+## Stack safety and interruption hardening
+
+Permanent public-seam tests now cover compilation and sampling of a 5,000-node mutually recursive component, a
+10,000-node acyclic `Suspend` chain, and traversal of 1,000 lazy child shrinks. Compilation is iterative, SCC detection
+uses an iterative two-pass graph traversal, and productivity propagation uses a dependent work queue instead of whole-
+graph fixed-point passes. The 10,000-node suspend probe dropped from roughly 2.2 seconds to 0.17 seconds locally after
+the work-queue change.
+
+Interruption is covered during deep suspended generation, a synchronous residual-filter discard loop, property
+execution, and shrink evaluation. Residual-filter loops yield according to the runtime's `Scheduler.MaxOpsBeforeYield`
+reference rather than an Arbitrary-specific constant. A nine-round base/head comparison classified the ordinary rare-
+filter fixture as parity (`+1.29%`, interval `-2.26%...+5.38%`). Cold recursive derivation, steady recursive sampling,
+and unique generation were also statistically inconclusive, with point estimates of `+2.23%`, `+0.93%`, and `+0.50%`.
+
+Constructive uniqueness now keeps primitive values in a native `Set` and reserves `Hash.hash` buckets plus
+`Effect.Equal` collision checks for objects and functions. This preserves the Schema equality contract, including
+structural object equality, without changing the numeric item distribution. The remaining unique cost is primarily
+duplicate regeneration caused by the approved item bias; changing that requires the separate architectural decision
+recorded above.
+
 ## Migration beyond the vertical slice
 
 1. complete Schema AST and built-in Declaration parity;
@@ -1014,6 +1066,13 @@ their owning declarations. Only the two materialized fixtures can establish the 
 
 Replay is deterministic for the implementation that produced it, but has no cross-release promise. The stable
 regression artifact remains the materialized counterexample copied into an example test.
+
+### Property purity
+
+Properties must not mutate generated inputs. The runner intentionally provides neither defensive cloning nor deep
+freezing. This matches Effect's immutable-data conventions and avoids requiring clone semantics from private
+`~toArbitrary` annotations and codec-derived declarations. Mutation isolation can be reconsidered only as a separate
+feature with explicit semantics for identity, prototypes, aliases, mutable built-ins, and decode effects.
 
 ## Completion criteria for removing fast-check
 

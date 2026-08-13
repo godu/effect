@@ -3281,8 +3281,9 @@ export const finite = appendChecks(number, [isFinite()])
  *
  * **Gotchas**
  *
- * When deriving an arbitrary, only `regExp.source` is used. Regular expression
- * flags are ignored because fast-check does not support them.
+ * Arbitrary metadata preserves both `regExp.source` and `regExp.flags`.
+ * Implementations that cannot consume all flags may still use the source as a
+ * generation hint because the Schema filter validates every generated value.
  *
  * **Example** (Validating an email pattern)
  *
@@ -3315,7 +3316,7 @@ export function isPattern(regExp: globalThis.RegExp, annotations?: Schema.Annota
       toJsonSchema: () => ({ pattern: source }),
       arbitrary: {
         constraint: {
-          patterns: [regExp.source]
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
       },
       ...annotations

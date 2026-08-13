@@ -2,6 +2,7 @@ import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
 import * as Pull from "../../Pull.ts"
 import * as Random from "../../Random.ts"
+import * as Scheduler from "../../Scheduler.ts"
 import type * as Schema from "../../Schema.ts"
 import type * as Model from "./model.ts"
 import * as Compiler from "./schema.ts"
@@ -232,7 +233,16 @@ const generateAttempt = <A>(
   size: number,
   shrinks: boolean
 ): Effect.Effect<Model.Attempt<A>> =>
-  compiled.generate({ size, shrinks, random: makeAttemptRandom(seed, attempt), budget: { remaining: size } })
+  compiled.generate({
+    size,
+    shrinks,
+    // This is fast-check v4.9.0's run-dependent numeric bias schedule (MIT). It makes short checks edge-heavy while
+    // progressively dedicating more attempts to the complete domain, without becoming part of the public API.
+    // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/property/IRawProperty.ts#L92-L95
+    biasFactor: 2 + Math.floor(Math.log10(attempt + 1)),
+    random: makeAttemptRandom(seed, attempt),
+    budget: { remaining: size }
+  })
 
 const resolveMasterSeed = (seed: string | number | undefined): Effect.Effect<string | number> =>
   seed === undefined ? Random.nextInt : Effect.succeed(seed)
@@ -248,6 +258,7 @@ export function sample<A>(self: Arbitrary<A>, options?: SampleOptions): Effect.E
     const count = natural(options?.count, 10, "count")
     const size = natural(options?.size, 10, "size")
     const maxDiscards = natural(options?.maxDiscards, Math.max(100, count * 10), "maxDiscards")
+    const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
     const seed = yield* resolveMasterSeed(options?.seed)
     const seedState = hashSeed(seed)
     const values: Array<A> = []
@@ -260,6 +271,8 @@ export function sample<A>(self: Arbitrary<A>, options?: SampleOptions): Effect.E
       } else if (++discards > maxDiscards) {
         const error: SampleError = { _tag: "SampleError", generated: values.length, discards }
         return yield* Effect.fail(error)
+      } else if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) {
+        yield* Effect.yieldNow
       }
     }
     return values
@@ -383,6 +396,7 @@ export function check<A, E, R>(
     const size = natural(options?.size, 10, "size")
     const maxDiscards = natural(options?.maxDiscards, Math.max(100, runsTarget * 10), "maxDiscards")
     const maxShrinks = natural(options?.maxShrinks, 100, "maxShrinks")
+    const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
     const seed = yield* resolveMasterSeed(options?.seed)
     const seedState = hashSeed(seed)
     let runs = 0
@@ -393,6 +407,7 @@ export function check<A, E, R>(
       const attempt = yield* generateAttempt(self[InternalTypeId], seedState, currentAttempt, size, true)
       if (attempt._tag === "Discarded") {
         if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards }
+        if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
         continue
       }
       const outcome = yield* evaluateProperty(property, attempt.sample.value)

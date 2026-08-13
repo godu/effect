@@ -28,6 +28,7 @@ export type Attempt<A> = Generated<A> | Discarded
 export interface GenerationState {
   readonly size: number
   readonly shrinks: boolean
+  readonly biasFactor: number
   readonly random: typeof Random.Random.Service
   readonly budget: {
     remaining: number
@@ -248,6 +249,97 @@ export const randomBigInt = (state: GenerationState, minimum: bigint, maximum: b
   }
 }
 
+interface NumberRange {
+  readonly minimum: number
+  readonly maximum: number
+}
+
+interface BigIntRange {
+  readonly minimum: bigint
+  readonly maximum: bigint
+}
+
+// The numeric edge ranges and their 2:1 preference for the edge closest to zero follow fast-check v4.9.0's
+// BiasNumericRange, IntegerArbitrary, and BigIntArbitrary (MIT). The policy stays private to the native engine.
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/BiasNumericRange.ts
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/IntegerArbitrary.ts
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/BigIntArbitrary.ts
+function numberBiasRanges(minimum: number, maximum: number): ReadonlyArray<NumberRange> {
+  if (minimum === maximum) return [{ minimum, maximum }]
+  if (minimum < 0 && maximum > 0) {
+    const low = Math.floor(Math.log2(-minimum))
+    const high = Math.floor(Math.log2(maximum))
+    return [
+      { minimum: -low, maximum: high },
+      { minimum: maximum - high, maximum },
+      { minimum, maximum: minimum + low }
+    ]
+  }
+  const gap = Math.floor(Math.log2(maximum - minimum))
+  const closeToMinimum = { minimum, maximum: minimum + gap }
+  const closeToMaximum = { minimum: maximum - gap, maximum }
+  return minimum < 0 ? [closeToMaximum, closeToMinimum] : [closeToMinimum, closeToMaximum]
+}
+
+function bigIntLogLike(value: bigint): bigint {
+  return value === BigInt(0) ? BigInt(0) : BigInt(value.toString().length)
+}
+
+function bigIntBiasRanges(minimum: bigint, maximum: bigint): ReadonlyArray<BigIntRange> {
+  if (minimum === maximum) return [{ minimum, maximum }]
+  if (minimum < BigInt(0) && maximum > BigInt(0)) {
+    const low = bigIntLogLike(-minimum)
+    const high = bigIntLogLike(maximum)
+    return [
+      { minimum: -low, maximum: high },
+      { minimum: maximum - high, maximum },
+      { minimum, maximum: minimum + low }
+    ]
+  }
+  const gap = bigIntLogLike(maximum - minimum)
+  const closeToMinimum = { minimum, maximum: minimum + gap }
+  const closeToMaximum = { minimum: maximum - gap, maximum }
+  return minimum < BigInt(0) ? [closeToMaximum, closeToMinimum] : [closeToMinimum, closeToMaximum]
+}
+
+function selectNumberRange(state: GenerationState, ranges: ReadonlyArray<NumberRange>): NumberRange {
+  if (ranges.length === 1) return ranges[0]
+  const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
+  return index < 0 ? ranges[0] : ranges[index + 1]
+}
+
+function selectBigIntRange(state: GenerationState, ranges: ReadonlyArray<BigIntRange>): BigIntRange {
+  if (ranges.length === 1) return ranges[0]
+  const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
+  return index < 0 ? ranges[0] : ranges[index + 1]
+}
+
+/** @internal */
+export function makeRandomNumericInt(
+  minimum: number,
+  maximum: number
+): (state: GenerationState) => number {
+  const full = { minimum, maximum }
+  const biased = numberBiasRanges(minimum, maximum)
+  return (state) => {
+    const range = randomInt(state, 1, state.biasFactor) === 1 ? selectNumberRange(state, biased) : full
+    return randomInt(state, range.minimum, range.maximum)
+  }
+}
+
+/** @internal */
+export function makeRandomNumericBigInt(
+  minimum: bigint,
+  maximum: bigint
+): (state: GenerationState) => bigint {
+  const full = { minimum, maximum }
+  const biased = bigIntBiasRanges(minimum, maximum)
+  return (state) => {
+    const range = randomInt(state, 1, state.biasFactor) === 1 ? selectBigIntRange(state, biased) : full
+    return randomBigInt(state, range.minimum, range.maximum)
+  }
+}
+
 // The monotone IEEE-754 index and adjacent-number navigation follow the model used by fast-check v4.9.0's
 // DoubleHelpers (MIT). This implementation uses a direct 64-bit bit cast instead of its exponent decomposition.
 // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/DoubleHelpers.ts
@@ -260,12 +352,16 @@ const numberBitsMask = (BigInt(1) << BigInt(64)) - BigInt(1)
 export function numberToIndex(value: number): bigint {
   numberView.setFloat64(0, value)
   const bits = numberView.getBigUint64(0)
-  return (bits & numberSignMask) === BigInt(0) ? bits | numberSignMask : ~bits & numberBitsMask
+  const unsigned = (bits & numberSignMask) === BigInt(0) ? bits | numberSignMask : ~bits & numberBitsMask
+  return unsigned - numberSignMask
 }
 
 /** @internal */
 export function indexToNumber(index: bigint): number {
-  const bits = (index & numberSignMask) === BigInt(0) ? ~index & numberBitsMask : index ^ numberSignMask
+  const unsigned = index + numberSignMask
+  const bits = (unsigned & numberSignMask) === BigInt(0)
+    ? ~unsigned & numberBitsMask
+    : unsigned ^ numberSignMask
   numberView.setBigUint64(0, bits)
   return numberView.getFloat64(0)
 }
@@ -285,12 +381,23 @@ export function previousNumber(value: number): number {
 }
 
 /** @internal */
-export const randomNumber = (state: GenerationState, minimum: number, maximum: number): number =>
-  indexToNumber(randomBigInt(state, numberToIndex(minimum), numberToIndex(maximum)))
-
-/** @internal */
-export const randomBetween = (state: GenerationState, minimum: number, maximum: number): number =>
-  state.random.nextDoubleUnsafe() * (maximum - minimum) + minimum
+export function makeRandomNumber(
+  minimum: number,
+  maximum: number,
+  allowNaN: boolean
+): (state: GenerationState) => number {
+  const minimumIndex = numberToIndex(minimum)
+  const maximumIndex = numberToIndex(maximum)
+  const nanBelow = allowNaN && maximumIndex <= BigInt(0)
+  const randomIndex = makeRandomNumericBigInt(
+    nanBelow ? minimumIndex - BigInt(1) : minimumIndex,
+    allowNaN && !nanBelow ? maximumIndex + BigInt(1) : maximumIndex
+  )
+  return (state) => {
+    const index = randomIndex(state)
+    return index < minimumIndex || index > maximumIndex ? Number.NaN : indexToNumber(index)
+  }
+}
 
 /** @internal */
 export const randomBoolean = (state: GenerationState): boolean => state.random.nextDoubleUnsafe() > 0.5

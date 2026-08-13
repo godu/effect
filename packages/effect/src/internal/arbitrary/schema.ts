@@ -2,6 +2,7 @@ import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
 import * as Exit from "../../Exit.ts"
+import * as Hash from "../../Hash.ts"
 import * as Option from "../../Option.ts"
 import * as Order from "../../Order.ts"
 import * as Schema from "../../Schema.ts"
@@ -10,6 +11,7 @@ import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
 import * as Annotation from "./annotation.ts"
 import * as Model from "./model.ts"
+import * as Regexp from "./regexp.ts"
 
 type Constraint = Schema.Annotations.ToArbitrary.GenerationConstraint
 type OrderedConstraint = Schema.Annotations.ToArbitrary.OrderedConstraint<any>
@@ -99,7 +101,10 @@ function mergeConstraint(self: Constraint | undefined, that: Constraint): Constr
     ? that.patterns
     : that.patterns === undefined
     ? self.patterns
-    : [...self.patterns, ...that.patterns] as [string, ...Array<string>]
+    : [...self.patterns, ...that.patterns] as [
+      Schema.Annotations.ToArbitrary.Pattern,
+      ...Array<Schema.Annotations.ToArbitrary.Pattern>
+    ]
   const ordered = that.ordered === undefined ? self?.ordered : mergeOrdered(self?.ordered, that.ordered)
   return {
     ...(minLength === undefined ? undefined : { minLength }),
@@ -487,13 +492,14 @@ function numberSample(
 
 function makeJson(): Model.Compiled<unknown> {
   let self: Model.Compiled<unknown>
+  const randomNumber = Model.makeRandomNumber(-100, 100, false)
   const leaf = (state: Model.GenerationState): Model.Sample<unknown> => {
     const choice = Model.randomIndex(state, 4)
     switch (choice) {
       case 0:
         return Model.makeSample(null)
       case 1:
-        const number = Model.randomBetween(state, -100, 100)
+        const number = randomNumber(state)
         return state.shrinks
           ? numberSample(number, undefined, undefined, false)
           : Model.makeSample(number)
@@ -539,6 +545,45 @@ function makeJson(): Model.Compiled<unknown> {
   return self
 }
 
+const regExpSources = [
+  ".",
+  ".*",
+  "\\d+",
+  "\\w+",
+  "[a-z]+",
+  "[A-Z]+",
+  "[0-9]+",
+  "^[a-zA-Z0-9]+$",
+  "^\\d{4}-\\d{2}-\\d{2}$"
+] as const
+
+const regExpFlags = ["g", "i", "m", "s", "u", "y"] as const
+
+function shrinkRegExp(value: globalThis.RegExp): ReadonlyArray<globalThis.RegExp> {
+  const candidates: Array<globalThis.RegExp> = []
+  if (value.source !== "(?:)") candidates.push(new globalThis.RegExp(""))
+  if (value.flags !== "") candidates.push(new globalThis.RegExp(value.source))
+  return candidates
+}
+
+function makeRegExp(): Model.Compiled<globalThis.RegExp> {
+  const compiled = Model.makeCompiled(
+    [],
+    () => 0,
+    (state) => {
+      const source = regExpSources[Model.randomIndex(state, regExpSources.length)]
+      let flags = ""
+      for (const flag of regExpFlags) if (Model.randomBoolean(state)) flags += flag
+      const value = new globalThis.RegExp(source, flags)
+      return Effect.succeed(Model.generated(
+        state.shrinks ? Model.sampleFromShrink(value, shrinkRegExp) : Model.makeSample(value)
+      ))
+    }
+  )
+  compiled.minCost = 0
+  return compiled
+}
+
 /** @internal */
 export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<S["Type"]> {
   const rootAst = SchemaAST.toType(schema.ast)
@@ -546,9 +591,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   const cache = new WeakMap<SchemaAST.AST, Map<Constraint | symbol, Model.Compiled<any>>>()
   const nodes: Array<Model.Compiled<any>> = []
   const suspendBodies = new Map<Model.Compiled<any>, Model.Compiled<any>>()
+  const pending: Array<() => void> = []
   const json = makeJson()
   const constructors: Annotation.Constructors = {
-    Json: () => json as unknown as Annotation.Arbitrary<any>
+    Json: () => json as unknown as Annotation.Arbitrary<any>,
+    RegExp: () => makeRegExp() as unknown as Annotation.Arbitrary<globalThis.RegExp>
   }
 
   const recur = (
@@ -567,43 +614,45 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     const placeholder = Model.makePlaceholder<any>()
     entries.set(cacheKey, placeholder)
     nodes.push(placeholder)
-
-    const checks = collectChecks(ast.checks, inherited)
-    const baseAst = ast.checks === undefined ? ast : SchemaAST.replaceChecks(ast, undefined)
-    const base = compileBase(baseAst, path, checks.constraint)
-    if (baseAst._tag === "Suspend") {
-      const body = base.dependencies[0]
-      placeholder.dependencies = [body]
-      placeholder.computeMinCost = () => {
-        if (body.minCost === infinity) return infinity
-        return body.minCost + (placeholder.recursive ? 1 : 0)
-      }
-      placeholder.generate = (state) => {
-        if (placeholder.recursive) {
-          if (state.budget.remaining <= 0) return Effect.succeed(Model.discarded)
-          state.budget.remaining--
+    pending.push(() => {
+      const checks = collectChecks(ast.checks, inherited)
+      const baseAst = ast.checks === undefined ? ast : SchemaAST.replaceChecks(ast, undefined)
+      const base = compileBase(baseAst, path, checks.constraint)
+      if (baseAst._tag === "Suspend") {
+        const body = base.dependencies[0]
+        placeholder.dependencies = [body]
+        placeholder.computeMinCost = () => {
+          if (body.minCost === infinity) return infinity
+          return body.minCost + (placeholder.recursive ? 1 : 0)
         }
-        return body.generate(state)
+        placeholder.generate = (state) =>
+          Effect.suspend(() => {
+            if (placeholder.recursive) {
+              if (state.budget.remaining <= 0) return Effect.succeed(Model.discarded)
+              state.budget.remaining--
+            }
+            return body.generate(state)
+          })
+        suspendBodies.set(placeholder, body)
+      } else {
+        placeholder.dependencies = base.dependencies
+        placeholder.computeMinCost = base.computeMinCost
+        placeholder.generate = base.generate
       }
-      suspendBodies.set(placeholder, body)
-    } else {
-      placeholder.dependencies = base.dependencies
-      placeholder.computeMinCost = base.computeMinCost
-      placeholder.generate = base.generate
-    }
-    if (checks.filters.length > 0) {
-      const generate = placeholder.generate
-      placeholder.generate = (state) =>
-        Effect.mapEager(generate(state), (attempt) => {
-          if (attempt._tag === "Discarded") return Model.discarded
-          const sample = Model.filterSample(
-            attempt.sample,
-            (value) =>
-              checks.filters.every((filter) => filter.run(value, ast, SchemaAST.defaultParseOptions) === undefined)
-          )
-          return Option.isSome(sample) ? Model.generated(sample.value) : Model.discarded
-        })
-    }
+      if (checks.filters.length > 0) {
+        const generate = placeholder.generate
+        placeholder.generate = (state) =>
+          Effect.mapEager(generate(state), (attempt) => {
+            if (attempt._tag === "Discarded") return Model.discarded
+            const sample = Model.filterSample(
+              attempt.sample,
+              (value) =>
+                checks.filters.every((filter) => filter.run(value, ast, SchemaAST.defaultParseOptions) === undefined)
+            )
+            return Option.isSome(sample) ? Model.generated(sample.value) : Model.discarded
+          })
+      }
+    })
     return placeholder
   }
 
@@ -637,20 +686,38 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           }
         )
       case "String": {
-        const [minimum, maximum] = lengthBounds(constraint, 16, path, "string")
+        const patternConstraints = constraint?.patterns ?? []
+        let pattern: Regexp.Compiled | undefined
+        for (const constraint of patternConstraints) {
+          pattern = Regexp.compile(constraint)
+          if (pattern !== undefined) break
+        }
+        const patternMinimum = pattern?.minimumLength ?? 0
+        const [minimum, maximum] = lengthBounds(constraint, Math.max(16, patternMinimum), path, "string")
         return Model.makeCompiled(
           [],
           () => 0,
           (state) => {
-            const upper = Math.min(maximum, Math.max(minimum, state.size * 2))
-            const length = Model.randomInt(state, minimum, upper)
-            let value = ""
-            for (let index = 0; index < length; index++) {
-              value += globalThis.String.fromCharCode(Model.randomInt(state, 32, 126))
+            const upper = Math.min(maximum, Math.max(minimum, pattern?.minimumLength ?? 0, state.size * 2))
+            let value: string | undefined
+            if (pattern === undefined) {
+              const length = Model.randomInt(state, minimum, upper)
+              value = ""
+              for (let index = 0; index < length; index++) {
+                value += globalThis.String.fromCharCode(Model.randomInt(state, 32, 126))
+              }
+            } else {
+              value = pattern.generate(state, minimum, upper)
             }
+            if (value === undefined) return Effect.succeed(Model.discarded)
             return Effect.succeed(Model.generated(
               state.shrinks
-                ? Model.sampleFromShrink(value, (value) => shrinkString(value, minimum))
+                ? Model.sampleFromShrink(
+                  value,
+                  pattern === undefined
+                    ? (value) => shrinkString(value, minimum)
+                    : (value) => pattern.shrink(value, minimum)
+                )
                 : Model.makeSample(value)
             ))
           }
@@ -659,31 +726,46 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       case "Number": {
         const integer = constraint?.integer === true
         const bounds = numberBounds(constraint, integer, path)
+        const numberMinimum = bounds.minimum ?? (constraint?.noInfinity === true
+          ? -Number.MAX_VALUE
+          : Number.NEGATIVE_INFINITY)
+        const numberMaximum = bounds.maximum ?? (constraint?.noInfinity === true
+          ? Number.MAX_VALUE
+          : Number.POSITIVE_INFINITY)
+        const randomNumber = integer
+          ? undefined
+          : Model.makeRandomNumber(
+            numberMinimum,
+            numberMaximum,
+            constraint?.noNaN !== true && bounds.minimum === undefined && bounds.maximum === undefined
+          )
+        let integerMinimum: number | undefined
+        let integerMaximum: number | undefined
+        let randomInteger: ((state: Model.GenerationState) => number) | undefined
         return Model.makeCompiled(
           [],
           () => 0,
           (state) => {
-            const magnitude = Math.max(1, state.size * state.size)
-            const center = bounds.minimum !== undefined && bounds.minimum > 0
-              ? bounds.minimum
-              : bounds.maximum !== undefined && bounds.maximum < 0
-              ? bounds.maximum
-              : 0
-            const minimum = bounds.minimum ?? center - magnitude
-            const maximum = bounds.maximum ?? center + magnitude
-            let value: number
-            if (
-              !integer && bounds.minimum === undefined && bounds.maximum === undefined && constraint?.noNaN !== true
-            ) {
-              const special = Model.randomIndex(state, constraint?.noInfinity === true ? 20 : 24)
-              value = special === 20 ? Number.NaN : special === 21 ? Number.POSITIVE_INFINITY : special === 22
-                ? Number.NEGATIVE_INFINITY
-                : Model.randomBetween(state, minimum, maximum)
-            } else {
-              value = integer
-                ? Model.randomInt(state, minimum, maximum)
-                : Model.randomNumber(state, minimum, maximum)
+            let minimum = numberMinimum
+            let maximum = numberMaximum
+            if (integer) {
+              const magnitude = Math.max(1, state.size * state.size)
+              const center = bounds.minimum !== undefined && bounds.minimum > 0
+                ? bounds.minimum
+                : bounds.maximum !== undefined && bounds.maximum < 0
+                ? bounds.maximum
+                : 0
+              minimum = bounds.minimum ?? center - magnitude
+              maximum = bounds.maximum ?? center + magnitude
+              if (randomInteger === undefined || minimum !== integerMinimum || maximum !== integerMaximum) {
+                integerMinimum = minimum
+                integerMaximum = maximum
+                randomInteger = Model.makeRandomNumericInt(minimum, maximum)
+              }
             }
+            const value = integer
+              ? randomInteger!(state)
+              : randomNumber!(state)
             return Effect.succeed(Model.generated(
               state.shrinks
                 ? numberSample(value, bounds.minimum, bounds.maximum, integer)
@@ -701,6 +783,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
           throw arbitraryError("bigint constraints", path)
         }
+        let previousLow: bigint | undefined
+        let previousHigh: bigint | undefined
+        let randomBigInt: ((state: Model.GenerationState) => bigint) | undefined
         return Model.makeCompiled(
           [],
           () => 0,
@@ -713,7 +798,12 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               : BigInt(0)
             const low = minimum ?? center - magnitude
             const high = maximum ?? center + magnitude
-            const value = Model.randomBigInt(state, low, high)
+            if (randomBigInt === undefined || low !== previousLow || high !== previousHigh) {
+              previousLow = low
+              previousHigh = high
+              randomBigInt = Model.makeRandomNumericBigInt(low, high)
+            }
+            const value = randomBigInt(state)
             return Effect.succeed(Model.generated(
               state.shrinks
                 ? Model.sampleFromShrink(value, (value) => value === BigInt(0) ? [] : [BigInt(0)])
@@ -905,12 +995,33 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
           )
         }
-        // Constructive uniqueness with bounded duplicate retries follows fast-check v4.9.0's ArrayArbitrary strategy
-        // (MIT).
-        // Effect.Equal defines the equality semantics here.
+        // Constructive uniqueness and the requested-length consecutive duplicate circuit breaker follow fast-check
+        // v4.9.0's ArrayArbitrary strategy (MIT). Hash buckets make Effect.Equal lookup expected-linear while retaining
+        // collision checks with Effect's equality semantics.
         // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
         const generated: Array<Model.Sample<any>> = []
+        const primitives = new globalThis.Set<any>()
+        const buckets = new globalThis.Map<number, Array<any>>()
+        const addUnique = (value: any): boolean => {
+          if (value === null || typeof value !== "object" && typeof value !== "function") {
+            if (primitives.has(value)) return false
+            primitives.add(value)
+            return true
+          }
+          const hash = Hash.hash(value)
+          const bucket = buckets.get(hash)
+          if (bucket !== undefined) {
+            for (let index = 0; index < bucket.length; index++) {
+              if (Equal.equals(bucket[index], value)) return false
+            }
+            bucket.push(value)
+          } else {
+            buckets.set(hash, [value])
+          }
+          return true
+        }
         let reserved = sumCosts(selected.map((child) => child.minCost))
+        const maximumRetries = selected.length
         let index = 0
         let retries = 0
         let budget = state.budget.remaining
@@ -925,8 +1036,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             if (Exit.isExit(effect) && effect._tag === "Success") {
               const attempt = effect.value as Model.Attempt<any>
               if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
-              if (generated.some((other) => Equal.equals(other.value, attempt.sample.value))) {
-                if (retries++ >= 10) return Effect.succeed(Model.discarded)
+              if (!addUnique(attempt.sample.value)) {
+                if (++retries >= maximumRetries) return Effect.succeed(Model.discarded)
                 state.budget.remaining = budget
                 continue
               }
@@ -937,8 +1048,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             }
             return Effect.flatMap(effect, (attempt) => {
               if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
-              if (generated.some((other) => Equal.equals(other.value, attempt.sample.value))) {
-                if (retries++ >= 10) return Effect.succeed(Model.discarded)
+              if (!addUnique(attempt.sample.value)) {
+                if (++retries >= maximumRetries) return Effect.succeed(Model.discarded)
                 state.budget.remaining = budget
               } else {
                 generated.push(attempt.sample)
@@ -1119,17 +1230,27 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   }
 
   const root = recur(rootAst, [])
+  for (let index = 0; index < pending.length; index++) pending[index]()
   markRecursiveSuspends(nodes, suspendBodies)
-  for (let pass = 0; pass <= nodes.length; pass++) {
-    let changed = false
-    for (const node of nodes) {
-      const next = node.computeMinCost()
-      if (next < node.minCost) {
-        node.minCost = next
-        changed = true
+  const dependents = new Map<Model.Compiled<any>, Array<Model.Compiled<any>>>()
+  for (const node of nodes) dependents.set(node, [])
+  for (const node of nodes) {
+    for (const dependency of node.dependencies) dependents.get(dependency)?.push(node)
+  }
+  const queue = nodes.slice()
+  const queued = new Set(nodes)
+  for (let index = 0; index < queue.length; index++) {
+    const node = queue[index]
+    queued.delete(node)
+    const next = node.computeMinCost()
+    if (next >= node.minCost) continue
+    node.minCost = next
+    for (const dependent of dependents.get(node)!) {
+      if (!queued.has(dependent)) {
+        queued.add(dependent)
+        queue.push(dependent)
       }
     }
-    if (!changed) break
   }
   if (root.minCost === infinity) {
     throw arbitraryError("a recursive schema without a finite generation path", [])
@@ -1141,41 +1262,49 @@ function markRecursiveSuspends(
   nodes: ReadonlyArray<Model.Compiled<any>>,
   suspendBodies: ReadonlyMap<Model.Compiled<any>, Model.Compiled<any>>
 ): void {
-  let nextIndex = 0
-  const indexes = new Map<Model.Compiled<any>, number>()
-  const lowLinks = new Map<Model.Compiled<any>, number>()
-  const stack: Array<Model.Compiled<any>> = []
-  const onStack = new Set<Model.Compiled<any>>()
-  const component = new Map<Model.Compiled<any>, number>()
-  let componentId = 0
-
-  const visit = (node: Model.Compiled<any>): void => {
-    const index = nextIndex++
-    indexes.set(node, index)
-    lowLinks.set(node, index)
-    stack.push(node)
-    onStack.add(node)
-    for (const dependency of node.dependencies) {
-      if (!indexes.has(dependency)) {
-        visit(dependency)
-        lowLinks.set(node, Math.min(lowLinks.get(node)!, lowLinks.get(dependency)!))
-      } else if (onStack.has(dependency)) {
-        lowLinks.set(node, Math.min(lowLinks.get(node)!, indexes.get(dependency)!))
+  const visited = new Set<Model.Compiled<any>>()
+  const finished: Array<Model.Compiled<any>> = []
+  for (const root of nodes) {
+    if (visited.has(root)) continue
+    visited.add(root)
+    const stack: Array<{ readonly node: Model.Compiled<any>; index: number }> = [{ node: root, index: 0 }]
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]
+      if (frame.index < frame.node.dependencies.length) {
+        const dependency = frame.node.dependencies[frame.index++]
+        if (!visited.has(dependency)) {
+          visited.add(dependency)
+          stack.push({ node: dependency, index: 0 })
+        }
+      } else {
+        finished.push(frame.node)
+        stack.pop()
       }
     }
-    if (lowLinks.get(node) !== index) return
+  }
+
+  const reverse = new Map<Model.Compiled<any>, Array<Model.Compiled<any>>>()
+  for (const node of visited) reverse.set(node, [])
+  for (const node of visited) {
+    for (const dependency of node.dependencies) reverse.get(dependency)?.push(node)
+  }
+  const component = new Map<Model.Compiled<any>, number>()
+  let componentId = 0
+  for (let index = finished.length - 1; index >= 0; index--) {
+    const root = finished[index]
+    if (component.has(root)) continue
+    component.set(root, componentId)
+    const stack = [root]
     while (stack.length > 0) {
-      const member = stack.pop()!
-      onStack.delete(member)
-      component.set(member, componentId)
-      if (member === node) break
+      const node = stack.pop()!
+      for (const dependency of reverse.get(node)!) {
+        if (component.has(dependency)) continue
+        component.set(dependency, componentId)
+        stack.push(dependency)
+      }
     }
     componentId++
   }
-
-  nodes.forEach((node) => {
-    if (!indexes.has(node)) visit(node)
-  })
   for (const [suspend, body] of suspendBodies) {
     suspend.recursive = component.get(suspend) === component.get(body)
   }

@@ -11,6 +11,7 @@ export interface Arbitrary<out A> {
 /** @internal */
 export interface Constructors {
   readonly Json: <A>() => Arbitrary<A>
+  readonly RegExp: () => Arbitrary<globalThis.RegExp>
 }
 
 /** @internal */

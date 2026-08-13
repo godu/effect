@@ -34,6 +34,7 @@ import { identity, memoize } from "./Function.ts"
 import * as Graph_ from "./Graph.ts"
 import * as HashMap_ from "./HashMap.ts"
 import * as HashSet_ from "./HashSet.ts"
+import type * as NativeArbitrary from "./internal/arbitrary/annotation.ts"
 import * as core from "./internal/core.ts"
 import * as InternalGraph from "./internal/graph.ts"
 import * as InternalRecord from "./internal/record.ts"
@@ -6701,7 +6702,7 @@ export function isTrimmed(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isTrimmed()" }),
       arbitrary: {
         constraint: {
-          patterns: [TRIMMED_PATTERN]
+          patterns: [{ source: TRIMMED_PATTERN, flags: "" }]
         }
       },
       ...annotations
@@ -7239,7 +7240,7 @@ export function isStartsWith(startsWith: string, annotations?: Annotations.Filte
       toCode: () => ({ runtime: `Schema.isStartsWith(${format(startsWith)})` }),
       arbitrary: {
         constraint: {
-          patterns: [regExp.source]
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
       },
       ...annotations
@@ -7293,7 +7294,7 @@ export function isEndsWith(endsWith: string, annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: `Schema.isEndsWith(${format(endsWith)})` }),
       arbitrary: {
         constraint: {
-          patterns: [regExp.source]
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
       },
       ...annotations
@@ -7348,7 +7349,7 @@ export function isIncludes(includes: string, annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: `Schema.isIncludes(${format(includes)})` }),
       arbitrary: {
         constraint: {
-          patterns: [regExp.source]
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
       },
       ...annotations
@@ -7404,7 +7405,7 @@ export function isUppercased(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isUppercased()" }),
       arbitrary: {
         constraint: {
-          patterns: [UPPERCASED_PATTERN]
+          patterns: [{ source: UPPERCASED_PATTERN, flags: "" }]
         }
       },
       ...annotations
@@ -7458,7 +7459,7 @@ export function isLowercased(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isLowercased()" }),
       arbitrary: {
         constraint: {
-          patterns: [LOWERCASED_PATTERN]
+          patterns: [{ source: LOWERCASED_PATTERN, flags: "" }]
         }
       },
       ...annotations
@@ -7512,7 +7513,7 @@ export function isCapitalized(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isCapitalized()" }),
       arbitrary: {
         constraint: {
-          patterns: [CAPITALIZED_PATTERN]
+          patterns: [{ source: CAPITALIZED_PATTERN, flags: "" }]
         }
       },
       ...annotations
@@ -7566,7 +7567,7 @@ export function isUncapitalized(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isUncapitalized()" }),
       arbitrary: {
         constraint: {
-          patterns: [UNCAPITALIZED_PATTERN]
+          patterns: [{ source: UNCAPITALIZED_PATTERN, flags: "" }]
         }
       },
       ...annotations
@@ -11969,6 +11970,7 @@ export const RegExp: RegExp = instanceOf(
             .map((flags) => flags.join(""))
         )
         .map(([source, flags]) => new globalThis.RegExp(source, flags)),
+    "~toArbitrary": () => (constructors) => constructors.RegExp(),
     toEquivalence: () => (a, b) => a.source === b.source && a.flags === b.flags
   }
 )
@@ -16555,6 +16557,8 @@ export declare namespace Annotations {
     readonly toCodecIso?:
       | ((typeParameters: TypeParameters.Type<TypeParameters>) => SchemaAST.Link)
       | undefined
+    /** @internal */
+    readonly "~toArbitrary"?: NativeArbitrary.ToArbitrary<T> | undefined
     readonly toArbitrary?: ToArbitrary.Declaration<T, TypeParameters> | undefined
     readonly toEquivalence?: ToEquivalence.Declaration<T, TypeParameters> | undefined
     readonly toFormatter?: ToFormatter.Declaration<T, TypeParameters> | undefined
@@ -16705,6 +16709,22 @@ export declare namespace Annotations {
     }
 
     /**
+     * Regular-expression source and flags used to guide string generation.
+     *
+     * **Details**
+     *
+     * The final Schema checks remain authoritative. An arbitrary implementation
+     * may use this metadata constructively or fall back to filtered generation.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Pattern {
+      readonly source: string
+      readonly flags: string
+    }
+
+    /**
      * Node-local arbitrary-generation constraint accumulated from schema checks.
      *
      * **Details**
@@ -16728,7 +16748,7 @@ export declare namespace Annotations {
     export interface GenerationConstraint {
       readonly minLength?: number | undefined
       readonly maxLength?: number | undefined
-      readonly patterns?: readonly [string, ...Array<string>]
+      readonly patterns?: readonly [Pattern, ...Array<Pattern>]
       readonly integer?: boolean | undefined
       readonly noInfinity?: boolean | undefined
       readonly noNaN?: boolean | undefined
