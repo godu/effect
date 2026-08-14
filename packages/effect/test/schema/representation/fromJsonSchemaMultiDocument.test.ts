@@ -148,7 +148,8 @@ describe("SchemaRepresentation.fromJsonSchemaMultiDocument", () => {
               identifier: "A",
               expected: "a value with a length of at least 1",
               "~structural": true,
-              arbitrary: { constraint: { minLength: 1 } }
+              arbitrary: { constraint: { minLength: 1 } },
+              toCodecArbitrary: { constraint: { minLength: 1 } }
             },
             aborted: false
           }]
@@ -184,7 +185,8 @@ describe("SchemaRepresentation.fromJsonSchemaMultiDocument", () => {
             annotations: {
               identifier: "A",
               expected: "a finite number",
-              arbitrary: { constraint: { noInfinity: true, noNaN: true } }
+              arbitrary: { constraint: { noInfinity: true, noNaN: true } },
+              toCodecArbitrary: { constraint: { number: "finite" } }
             },
             aborted: false
           }]

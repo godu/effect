@@ -400,7 +400,8 @@ describe("SchemaRepresentation.toRepresentation", () => {
               },
               annotations: {
                 arbitrary: { constraint: { patterns: [{ source: "^[A-Z]", flags: "" }] } },
-                expected: "a string matching the RegExp ^[A-Z]"
+                expected: "a string matching the RegExp ^[A-Z]",
+                toCodecArbitrary: { constraint: { patterns: [{ source: "^[A-Z]", flags: "" }] } }
               },
               aborted: false
             }]
