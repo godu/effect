@@ -1077,8 +1077,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       }
       case "Unknown":
-      case "Any":
-        return recur(Schema.Json.ast, path)
+      case "Any": {
+        const json = recur(Schema.Json.ast, path)
+        return Model.makeCompiled([json], () => json.minCost, (state) => json.generate(state))
+      }
       case "ObjectKeyword": {
         const json = recur(Schema.Json.ast, path)
         return Model.makeCompiled(

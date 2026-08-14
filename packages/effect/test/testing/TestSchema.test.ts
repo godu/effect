@@ -1,5 +1,7 @@
 import { Context, Effect, Schema, SchemaGetter, SchemaIssue } from "effect"
+import * as SchemaTransformation from "effect/SchemaTransformation"
 import { TestSchema } from "effect/testing"
+import * as assert from "node:assert"
 import { describe, it } from "vitest"
 
 describe("TestSchema", () => {
@@ -73,6 +75,36 @@ describe("TestSchema", () => {
   it("verifyLosslessTransformation", async () => {
     const schema = Schema.FiniteFromString.check(Schema.isGreaterThan(0))
     const assert = new TestSchema.Asserts(schema)
-    await assert.verifyLosslessTransformation()
+    await assert.verifyLosslessTransformation({ runs: 20, seed: "lossless" })
+  })
+
+  it("verifyLosslessTransformation reports a native counterexample and replay", async () => {
+    const schema = Schema.Number.pipe(
+      Schema.decodeTo(
+        Schema.Number,
+        SchemaTransformation.transform({ decode: (value) => value, encode: () => 0 })
+      )
+    )
+    const asserts = new TestSchema.Asserts(schema)
+
+    await assert.rejects(
+      () => asserts.verifyLosslessTransformation({ runs: 20, seed: "lossy" }),
+      (error: Error) => {
+        assert.match(error.message, /Property falsified/)
+        assert.match(error.message, /Counterexample:/)
+        assert.match(error.message, /Replay:/)
+        return true
+      }
+    )
+  })
+
+  it("verifyGeneration bounds residual discards", () => {
+    const schema = Schema.Null.check(Schema.makeFilter(() => false))
+    const asserts = new TestSchema.Asserts(schema)
+
+    assert.throws(
+      () => asserts.arbitrary().verifyGeneration({ runs: 1, maxDiscards: 2, seed: "exhausted" }),
+      /Property exhausted after 0 run\(s\) and 3 discard\(s\)/
+    )
   })
 })

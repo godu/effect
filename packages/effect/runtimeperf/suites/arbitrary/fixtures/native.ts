@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
+import * as TestSchema from "effect/testing/TestSchema"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import assert from "node:assert/strict"
 import {
@@ -156,6 +157,14 @@ export const checkPass100 = () => {
     validate: (result: Arbitrary.CheckResult<number, never>) => {
       assert.deepEqual(result, { _tag: "Passed", runs: 100, discards: 0 })
     }
+  }
+}
+
+export const testSchemaVerifyGeneration100 = () => {
+  const asserts = new TestSchema.Asserts(Schema.Int)
+  return {
+    run: () => asserts.arbitrary().verifyGeneration({ runs: 100, seed }),
+    validate: (result: void) => assert.equal(result, undefined)
   }
 }
 

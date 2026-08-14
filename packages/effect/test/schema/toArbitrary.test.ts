@@ -1,5 +1,5 @@
 import { BigDecimal, Chunk, DateTime, Effect, HashMap, HashSet, Order, Schema, SchemaIssue } from "effect"
-import { FastCheck, TestSchema } from "effect/testing"
+import { FastCheck } from "effect/testing"
 import { describe, it } from "vitest"
 import { assertInclude, assertInstanceOf, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
@@ -12,12 +12,7 @@ function assertUnsupportedSchema(schema: Schema.Constraint, message: string) {
 }
 
 function verifyGeneration<S extends Schema.ConstraintCodec<unknown, unknown>>(schema: S, numRuns?: number) {
-  const asserts = new TestSchema.Asserts(schema)
-  if (numRuns === undefined) {
-    asserts.arbitrary().verifyGeneration()
-  } else {
-    asserts.arbitrary().verifyGeneration({ params: { numRuns } })
-  }
+  FastCheck.assert(FastCheck.property(toArbitrary(schema), Schema.is(schema)), { numRuns: numRuns ?? 20 })
 }
 
 // Guard for "fast but wrong" regressions: samples the derived arbitrary and

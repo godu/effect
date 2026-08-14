@@ -182,6 +182,16 @@
               "size": 100
             },
             {
+              "name": "test-schema-verify-generation-100-native",
+              "export": "testSchemaVerifyGeneration100",
+              "scenario": "test-schema-verify-generation-100",
+              "operation": "derive-and-check",
+              "astTags": [
+                "Number"
+              ],
+              "size": 100
+            },
+            {
               "name": "check-falsify-shrink-native",
               "export": "checkFalsifyAndShrink",
               "scenario": "arbitrary-check-falsify-shrink",
@@ -312,6 +322,13 @@
               "export": "checkPass100",
               "scenario": "arbitrary-check-pass-100",
               "operation": "check",
+              "size": 100
+            },
+            {
+              "name": "test-schema-verify-generation-100-fast-check-v4",
+              "export": "testSchemaVerifyGeneration100",
+              "scenario": "test-schema-verify-generation-100",
+              "operation": "derive-and-check",
               "size": 100
             },
             {

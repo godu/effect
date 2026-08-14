@@ -1025,6 +1025,20 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every((value) => typeof value === "symbol"))
       }))
 
+    it.effect("generates Unknown and Any through Json", () =>
+      Effect.gen(function*() {
+        for (const schema of [Schema.Unknown, Schema.Any]) {
+          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+            count: 30,
+            maxDiscards: 0,
+            seed: "unknown-any",
+            size: 5
+          })
+
+          assert.isTrue(values.every(Schema.is(Schema.Json)))
+        }
+      }))
+
     it.effect("uses the private native annotation for Json", () =>
       Effect.gen(function*() {
         const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), { count: 30, seed: "json", size: 5 })

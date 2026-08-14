@@ -146,6 +146,15 @@ export const checkPass100 = () => {
   }
 }
 
+export const testSchemaVerifyGeneration100 = () => ({
+  run: () => {
+    const schema = Schema.Int
+    const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+    FastCheck.assert(FastCheck.property(arbitrary, Schema.is(schema)), { numRuns: 100, seed })
+  },
+  validate: (result: void) => assert.equal(result, undefined)
+})
+
 export const checkFalsifyAndShrink = () => {
   const arbitrary = Schema.toArbitrary(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))

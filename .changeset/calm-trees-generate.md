@@ -15,3 +15,7 @@ constructive generation without exposing an arbitrary builder, registry, or seco
 Change `Schema.Annotations.ToArbitrary.GenerationConstraint.patterns` to retain each regular expression as
 `{ source, flags }`. Legacy fast-check derivation continues to consume the source, while native derivation preserves the
 complete regular-expression semantics.
+
+Migrate `TestSchema.Asserts.verifyLosslessTransformation` and `TestSchema.Asserts.arbitrary().verifyGeneration` to the
+native runner. Both methods now accept native check options directly, bound unsuccessful generation, and include the
+minimized counterexample and replay token in property failures.
