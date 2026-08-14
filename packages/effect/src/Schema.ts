@@ -12034,6 +12034,7 @@ export const URL: URL = instanceOf(
         SchemaTransformation.urlFromString
       ),
     toArbitrary: () => (fc) => fc.webUrl().map((s) => new globalThis.URL(s)),
+    "~toArbitrary": () => (constructors) => constructors.URL(),
     toEquivalence: () => (a, b) => a.toString() === b.toString()
   }
 )
@@ -12165,7 +12166,8 @@ export const Date: Date = declare(
       fc.date(dateArbitraryConstraints(
         ctx?.constraint?.ordered?.order === Order.Date ? ctx.constraint.ordered : undefined,
         { noInvalidDate: true }
-      ))
+      )),
+    "~toArbitrary": () => (constructors) => constructors.Date()
   }
 )
 
@@ -13546,7 +13548,8 @@ export const Uint8Array: Uint8Array = instanceOf(globalThis.Uint8Array<ArrayBuff
       Base64String,
       SchemaTransformation.uint8ArrayFromBase64String
     ),
-  toArbitrary: () => (fc) => fc.uint8Array()
+  toArbitrary: () => (fc) => fc.uint8Array(),
+  "~toArbitrary": () => (constructors) => constructors.Uint8Array()
 })
 
 /**

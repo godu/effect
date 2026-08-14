@@ -4,6 +4,7 @@
  * @since 4.0.0
  */
 import type * as Effect from "../../Effect.ts"
+import type * as Model from "../../internal/arbitrary/model.ts"
 import * as Internal from "../../internal/arbitrary/runner.ts"
 import type * as Schema from "../../Schema.ts"
 import type * as Types from "../../Types.ts"
@@ -14,7 +15,7 @@ import type * as Types from "../../Types.ts"
  * @category type IDs
  * @since 4.0.0
  */
-export const TypeId: unique symbol = Symbol.for("~effect/unstable/arbitrary/Arbitrary")
+export const TypeId: TypeId = Internal.TypeId
 
 /**
  * Type of the runtime identifier for native `Arbitrary` values.
@@ -22,7 +23,7 @@ export const TypeId: unique symbol = Symbol.for("~effect/unstable/arbitrary/Arbi
  * @category type IDs
  * @since 4.0.0
  */
-export type TypeId = typeof TypeId
+export type TypeId = "~effect/unstable/arbitrary/Arbitrary"
 
 /**
  * Represents a pure description of values that can be generated and shrunk.
@@ -35,12 +36,20 @@ export type TypeId = typeof TypeId
  * @since 4.0.0
  */
 export interface Arbitrary<out A> {
-  readonly [TypeId]: typeof TypeId
+  readonly [TypeId]: TypeId
   readonly "~A": Types.Covariant<A>
+  /** @internal */
+  readonly gen: Model.Compiled<A>
 }
 
 /**
  * Configures direct sampling from an `Arbitrary`.
+ *
+ * **Details**
+ *
+ * `size` bounds the cardinality or complexity of unconstrained generated values. Strings, arrays, and object
+ * properties scale with it without an additional internal ceiling. Explicit Schema minima and required members are
+ * still honored, while explicit maxima clamp generation.
  *
  * @category models
  * @since 4.0.0
@@ -85,6 +94,11 @@ export type Replay = string
  * Configures property checking, shrinking, and replay.
  *
  * **Details**
+ *
+ * `size` is the maximum generation budget. Checking starts with smaller values and grows to that budget according to
+ * completed runs; discarded attempts do not advance the progression. A single-run check uses the configured size.
+ * Unconstrained strings, arrays, and object properties use the current budget without an additional internal ceiling;
+ * explicit Schema bounds and required members still apply.
  *
  * `maxShrinks` bounds the number of candidate property evaluations performed while shrinking. The `shrinks` field in
  * a `Falsified` result counts only candidates that were accepted as smaller failures.
@@ -144,6 +158,11 @@ export interface Passed {
 
 /**
  * Reports a generated failure and its shrunk counterexample.
+ *
+ * **Details**
+ *
+ * `runs` counts main property evaluations through the falsifying evaluation. It excludes evaluations performed while
+ * shrinking. A replay reports one run.
  *
  * @category models
  * @since 4.0.0
@@ -210,7 +229,7 @@ export type CheckResult<A, E> = Passed | Falsified<A, E> | Exhausted | ReplayMis
  * @since 4.0.0
  */
 export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Type"]> {
-  return Internal.schema(schema) as unknown as Arbitrary<S["Type"]>
+  return Internal.schema(schema)
 }
 
 /**
@@ -227,7 +246,7 @@ export function sample<A>(
   self: Arbitrary<A>,
   options?: SampleOptions
 ): Effect.Effect<ReadonlyArray<A>, SampleError> {
-  return Internal.sample(self as unknown as Internal.Arbitrary<A>, options)
+  return Internal.sample(self, options)
 }
 
 /**
@@ -247,6 +266,10 @@ export function sample<A>(
  * Properties must treat generated values as immutable. The runner does not clone values before evaluation, so
  * mutation can change reported counterexamples or interfere with shrinking and replay.
  *
+ * A property must also produce the same outcome for the same input and initial environment. The runner may evaluate
+ * it repeatedly and does not restore mutable services between evaluations. Stateful properties should acquire and
+ * release an independent fixture inside each evaluation.
+ *
  * @category running
  * @since 4.0.0
  */
@@ -255,9 +278,5 @@ export function check<A, E = never, R = never>(
   property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
   options?: CheckOptions
 ): Effect.Effect<CheckResult<A, E>, never, R> {
-  return Internal.check(
-    self as unknown as Internal.Arbitrary<A>,
-    property,
-    options as Internal.CheckOptions | undefined
-  ) as Effect.Effect<CheckResult<A, E>, never, R>
+  return Internal.check(self, property, options)
 }

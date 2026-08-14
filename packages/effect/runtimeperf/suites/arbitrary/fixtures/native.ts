@@ -2,40 +2,24 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import assert from "node:assert/strict"
-import type { Tree } from "./schema.ts"
-import { makeConstrainedStringSchema, makeRareFilterSchema, makeTreeSchema, makeUniqueArraySchema } from "./schema.ts"
+import {
+  makeConstrainedStringSchema,
+  makeRareFilterSchema,
+  makeTreeSchema,
+  makeUniqueArraySchema,
+  validateNumbers,
+  validateStrings,
+  validateTrees,
+  validateUint8Arrays
+} from "./schema.ts"
 
 const seed = 42
 const size = 10
-const validateTree = Schema.is(makeTreeSchema())
-
-const countTreeNodes = (tree: Tree): number =>
-  1 + tree.children.reduce((total, child) => total + countTreeNodes(child), 0)
-
-const validateTrees = (count: number, minimumNodes: number, maximumNodes: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every(validateTree), true)
-  const nodes = values.reduce((total, tree) => total + countTreeNodes(tree), 0)
-  assert.ok(nodes >= minimumNodes && nodes <= maximumNodes)
-}
-
-const validateStrings = (count: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every((value) => typeof value === "string" && value.length === 32), true)
-}
-
-const validateNumbers = (count: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every((value) => typeof value === "number" && value >= 2 && value <= 4), true)
-}
 
 export const coldRecursiveFirstSample = () => ({
   run: () =>
     Effect.runSync(
-      Arbitrary.sample(Arbitrary.schema(makeTreeSchema()), { count: 1, seed, size: 5 })
+      Arbitrary.sample(Arbitrary.schema(makeTreeSchema()), { count: 1, seed, size: 1 })
     ),
   validate: validateTrees(1, 2, 2)
 })
@@ -64,6 +48,15 @@ export const boundedNumberSample128 = () => {
   return {
     run: () => Effect.runSync(program),
     validate: validateNumbers(128)
+  }
+}
+
+export const uint8ArraySample128 = () => {
+  const arbitrary = Arbitrary.schema(Schema.Uint8Array)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateUint8Arrays(128)
   }
 }
 

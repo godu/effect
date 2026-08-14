@@ -1,34 +1,18 @@
 import * as Schema from "effect/Schema"
 import * as FastCheck from "effect/testing/FastCheck"
 import assert from "node:assert/strict"
-import type { Tree } from "./schema.ts"
-import { makeConstrainedStringSchema, makeRareFilterSchema, makeTreeSchema, makeUniqueArraySchema } from "./schema.ts"
+import {
+  makeConstrainedStringSchema,
+  makeRareFilterSchema,
+  makeTreeSchema,
+  makeUniqueArraySchema,
+  validateNumbers,
+  validateStrings,
+  validateTrees,
+  validateUint8Arrays
+} from "./schema.ts"
 
 const seed = 42
-const validateTree = Schema.is(makeTreeSchema())
-
-const countTreeNodes = (tree: Tree): number =>
-  1 + tree.children.reduce((total, child) => total + countTreeNodes(child), 0)
-
-const validateTrees = (count: number, minimumNodes: number, maximumNodes: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every(validateTree), true)
-  const nodes = values.reduce((total, tree) => total + countTreeNodes(tree), 0)
-  assert.ok(nodes >= minimumNodes && nodes <= maximumNodes)
-}
-
-const validateStrings = (count: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every((value) => typeof value === "string" && value.length === 32), true)
-}
-
-const validateNumbers = (count: number) => (values: unknown) => {
-  assert.ok(Array.isArray(values))
-  assert.equal(values.length, count)
-  assert.equal(values.every((value) => typeof value === "number" && value >= 2 && value <= 4), true)
-}
 
 export const coldRecursiveFirstSample = () => ({
   run: () => FastCheck.sample(Schema.toArbitrary(makeTreeSchema())(FastCheck), { numRuns: 1, seed }),
@@ -58,6 +42,14 @@ export const boundedNumberSample128 = () => {
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateNumbers(128)
+  }
+}
+
+export const uint8ArraySample128 = () => {
+  const arbitrary = Schema.toArbitrary(Schema.Uint8Array)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateUint8Arrays(128)
   }
 }
 

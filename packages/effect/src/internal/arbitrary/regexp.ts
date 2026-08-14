@@ -43,6 +43,7 @@ interface Interval {
 
 export interface Compiled {
   readonly minimumLength: number
+  readonly hasLengthBetween: (minimumLength: number, maximumLength: number) => boolean
   readonly generate: (
     state: Model.GenerationState,
     minimumLength: number,
@@ -170,7 +171,8 @@ function restrictCharacterCodePoints(node: Node, maximum: number): Node {
       return alternation(node.nodes.map((child) => restrictCharacterCodePoints(child, maximum)))
     case "Repetition":
       return { ...node, node: restrictCharacterCodePoints(node.node, maximum) }
-    default:
+    case "Empty":
+    case "Literal":
       return node
   }
 }
@@ -576,20 +578,20 @@ function possibleLengths(node: Node, limit: number, cache: LengthCache): Lengths
   switch (node._tag) {
     case "Empty":
       out[0] = true
-      break
+      return out
     case "Literal":
       if (node.value.length <= limit) out[node.value.length] = true
-      break
+      return out
     case "Character":
       if (node.intervals.some((interval) => countCodePoints(interval, 1) > 0) && limit >= 1) out[1] = true
       if (node.intervals.some((interval) => countCodePoints(interval, 2) > 0) && limit >= 2) out[2] = true
-      break
+      return out
     case "Alternation":
       for (const child of node.nodes) {
         const lengths = possibleLengths(child, limit, cache)
         for (let length = 0; length <= limit; length++) if (lengths[length]) out[length] = true
       }
-      break
+      return out
     case "Concatenation": {
       let current = emptyLengths(limit)
       current[0] = true
@@ -597,15 +599,14 @@ function possibleLengths(node: Node, limit: number, cache: LengthCache): Lengths
         current = concatenateLengths(current, possibleLengths(child, limit, cache), limit) as Array<boolean>
       }
       for (let length = 0; length <= limit; length++) out[length] = current[length]
-      break
+      return out
     }
     case "Repetition": {
       const lengths = repetitionLengths(node, possibleLengths(node.node, limit, cache), limit)
       for (let length = 0; length <= limit; length++) out[length] = lengths[length]
-      break
+      return out
     }
   }
-  return out
 }
 
 function generateSequence(
@@ -815,6 +816,13 @@ export function compile(pattern: Pattern): Compiled | undefined {
   const minimum = minimumLength(node)
   return {
     minimumLength: minimum,
+    hasLengthBetween: (minimumLength, maximumLength) => {
+      const lengths = possibleLengths(node, maximumLength, new Map())
+      for (let length = minimumLength; length <= maximumLength; length++) {
+        if (lengths[length]) return true
+      }
+      return false
+    },
     generate: (state, minimumLength, maximumLength) => {
       const cache: LengthCache = new Map()
       const lengths = possibleLengths(node, maximumLength, cache)
@@ -823,7 +831,7 @@ export function compile(pattern: Pattern): Compiled | undefined {
         if (lengths[length]) candidates.push(length)
       }
       if (candidates.length === 0) return undefined
-      const offset = Model.randomInt(state, 0, candidates.length - 1)
+      const offset = Model.randomLength(state, 0, candidates.length - 1)
       const value = generateExact(node, candidates[offset], state, cache)
       return value !== undefined && test(regExp, value) ? value : undefined
     },

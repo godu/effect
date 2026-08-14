@@ -10,8 +10,11 @@ export interface Arbitrary<out A> {
 
 /** @internal */
 export interface Constructors {
+  readonly Date: () => Arbitrary<globalThis.Date>
   readonly Json: <A>() => Arbitrary<A>
   readonly RegExp: () => Arbitrary<globalThis.RegExp>
+  readonly Uint8Array: () => Arbitrary<globalThis.Uint8Array<ArrayBufferLike>>
+  readonly URL: () => Arbitrary<globalThis.URL>
 }
 
 /** @internal */

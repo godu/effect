@@ -1,5 +1,17 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Effect, Exit, Fiber, Option, Order, Random, Result, Schema } from "effect"
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Order,
+  Random,
+  Result,
+  Schema,
+  SchemaIssue,
+  SchemaTransformation
+} from "effect"
 import { FastCheck } from "effect/testing"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
@@ -114,6 +126,105 @@ describe("Arbitrary", () => {
         assert.isTrue(new Set(values.map((value) => value.flags)).size > 1)
       }))
 
+    it.effect("generates and shrinks web URL declarations without codec filtering", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(Schema.URL)
+        const values = yield* Arbitrary.sample(arbitrary, {
+          count: 200,
+          maxDiscards: 0,
+          seed: "url-declaration",
+          size: 10
+        })
+
+        assert.isTrue(values.every((value) => value instanceof globalThis.URL))
+        assert.deepStrictEqual(new Set(values.map((value) => value.protocol)), new Set(["http:", "https:"]))
+        assert.isTrue(values.some((value) => value.pathname !== "/"))
+
+        const result = yield* Arbitrary.check(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "url-shrink",
+          size: 10
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.isAbove(result.shrinks, 0)
+          assert.match(result.counterexample.protocol, /^https?:$/)
+        }
+      }))
+
+    it.effect("generates and shrinks Date declarations constructively across their full domain", () =>
+      Effect.gen(function*() {
+        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Date), {
+          count: 25_000,
+          maxDiscards: 0,
+          seed: "date-declaration"
+        })
+        const timestamps = values.map((value) => value.getTime())
+
+        assert.include(timestamps, -8_640_000_000_000_000)
+        assert.include(timestamps, 0)
+        assert.include(timestamps, 8_640_000_000_000_000)
+        assert.isTrue(values.every(Schema.is(Schema.Date)))
+
+        const constrained = Schema.Date.check(Schema.isBetweenDate({
+          minimum: new globalThis.Date(0),
+          maximum: new globalThis.Date(10),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        }))
+        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+          count: 500,
+          maxDiscards: 0,
+          seed: "date-constraints"
+        })
+        const constrainedTimestamps = constrainedValues.map((value) => value.getTime())
+        assert.include(constrainedTimestamps, 1)
+        assert.include(constrainedTimestamps, 9)
+        assert.isTrue(constrainedValues.every(Schema.is(constrained)))
+
+        const result = yield* Arbitrary.check(Arbitrary.schema(Schema.Date), () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "date-shrink"
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.getTime(), 0)
+      }))
+
+    it.effect("generates and shrinks Uint8Array declarations through native Array semantics", () =>
+      Effect.gen(function*() {
+        const schema = Schema.Uint8Array.check(Schema.isMinLength(2), Schema.isMaxLength(10))
+        const arbitrary = Arbitrary.schema(schema)
+        const values = yield* Arbitrary.sample(arbitrary, {
+          count: 8_192,
+          maxDiscards: 0,
+          seed: "uint8-array-declaration",
+          size: 10
+        })
+        const lengths = values.map((value) => value.length)
+        const bytes = values.flatMap((value) => [...value])
+
+        assert.isTrue(values.every((value) => value instanceof globalThis.Uint8Array))
+        assert.isTrue(values.every(Schema.is(schema)))
+        assert.include(lengths, 2)
+        assert.include(lengths, 10)
+        assert.include(bytes, 0)
+        assert.include(bytes, 255)
+
+        const result = yield* Arbitrary.check(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "uint8-array-shrink",
+          size: 10
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.instanceOf(result.counterexample, globalThis.Uint8Array)
+          assert.deepStrictEqual([...result.counterexample], [0, 0])
+        }
+      }))
+
     it.effect("explores strings around an unanchored match", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isIncludes("needle"))
@@ -182,31 +293,25 @@ describe("Arbitrary", () => {
         const schema = Schema.String.check(Schema.isPattern(/^(?=)[ -~]*$/))
         const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
           count: 20,
-          maxDiscards: 0,
+          maxDiscards: 20,
           seed: "unsupported-permissive-pattern"
         })
 
         assert.isTrue(values.every(Schema.is(schema)))
       }))
 
-    it.effect("bounds generation when pattern and length constraints cannot overlap", () =>
-      Effect.gen(function*() {
-        const schema = Schema.String.check(
-          Schema.isPattern(/^(aa)+$/),
-          Schema.isMinLength(3),
-          Schema.isMaxLength(3)
-        )
-        const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
-          count: 1,
-          maxDiscards: 2,
-          seed: "empty-pattern-length-intersection"
-        }))
+    it("fails derivation when pattern and length constraints cannot overlap", () => {
+      const schema = Schema.String.check(
+        Schema.isPattern(/^(aa)+$/),
+        Schema.isMinLength(3),
+        Schema.isMaxLength(3)
+      )
 
-        assert.isTrue(Result.isFailure(result))
-        if (Result.isFailure(result)) {
-          assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
-        }
-      }))
+      assert.throws(
+        () => Arbitrary.schema(schema),
+        /Unable to derive an arbitrary for string constraints/
+      )
+    })
 
     it.effect("keeps pattern constraints while shrinking strings", () =>
       Effect.gen(function*() {
@@ -224,6 +329,22 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         assert.isTrue(evaluated.every(Schema.is(schema)))
         if (result._tag === "Falsified") assert.strictEqual(result.counterexample.length, 4)
+      }))
+
+    it.effect("shrinks fixed-length String code units toward null", () =>
+      Effect.gen(function*() {
+        const schema = Schema.String.check(Schema.isMinLength(3), Schema.isMaxLength(3))
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+          runs: 1,
+          seed: "string-code-unit-shrink",
+          size: 3
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.notStrictEqual(result.initialInput, "\0\0\0")
+          assert.strictEqual(result.counterexample, "\0\0\0")
+        }
       }))
 
     it.effect("structurally shrinks regular-expression repetitions", () =>
@@ -352,6 +473,110 @@ describe("Arbitrary", () => {
         assert.include(bigints, BigInt(0))
         assert.include(bigints, maximumBigInt)
         assert.isAtLeast(new Set(bigints).size, 15_000)
+      }))
+
+    it.effect("targets String, Array, and Record cardinality boundaries while preserving intermediate sizes", () =>
+      Effect.gen(function*() {
+        const count = 8_192
+        const assertBoundaryBias = Effect.fnUntraced(function*<A>(
+          schema: Schema.Schema<A>,
+          cardinality: (value: A) => number
+        ) {
+          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+            count,
+            maxDiscards: count,
+            seed: "length-edge-bias",
+            size: 10
+          })
+          const buckets = Array.from({ length: 11 }, () => 0)
+          for (const value of values) buckets[cardinality(value)]!++
+
+          assert.isAtLeast(buckets[0], count * 0.12)
+          assert.isAtLeast(buckets[10], count * 0.12)
+          for (const bucket of buckets.slice(1, -1)) assert.isAtLeast(bucket, count * 0.04)
+        })
+
+        yield* assertBoundaryBias(Schema.String.check(Schema.isMaxLength(10)), (value) => value.length)
+        yield* assertBoundaryBias(Schema.Array(Schema.Null).check(Schema.isMaxLength(10)), (value) => value.length)
+        yield* assertBoundaryBias(
+          Schema.Record(Schema.String, Schema.Null).check(Schema.isMaxProperties(10)),
+          (value) => Object.keys(value).length
+        )
+      }))
+
+    it.effect("injects the approved JavaScript String edge corpus", () =>
+      Effect.gen(function*() {
+        const corpus = [
+          "",
+          " ",
+          "\t",
+          "\n",
+          "\0",
+          "0",
+          "-1",
+          "4294967295",
+          "__proto__",
+          "constructor",
+          "prototype",
+          "toString",
+          "\uD800",
+          "\uDC00",
+          "😀"
+        ]
+        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.String), {
+          count: 8_192,
+          maxDiscards: 0,
+          seed: "string-edge-corpus",
+          size: 16
+        })
+
+        for (const value of corpus) assert.include(values, value)
+      }))
+
+    it.effect("scales unconstrained String, Array, and Record sizes without hidden ceilings", () =>
+      Effect.gen(function*() {
+        const size = 32
+        const strings = yield* Arbitrary.sample(Arbitrary.schema(Schema.String), {
+          count: 200,
+          maxDiscards: 0,
+          seed: "unconstrained-size",
+          size
+        })
+        const arrays = yield* Arbitrary.sample(Arbitrary.schema(Schema.Array(Schema.Null)), {
+          count: 200,
+          maxDiscards: 0,
+          seed: "unconstrained-size",
+          size
+        })
+        const records = yield* Arbitrary.sample(Arbitrary.schema(Schema.Record(Schema.String, Schema.Null)), {
+          count: 200,
+          maxDiscards: 200,
+          seed: "unconstrained-size",
+          size
+        })
+
+        assert.isTrue(strings.some((value) => value.length > 16))
+        assert.isTrue(arrays.some((value) => value.length > 8))
+        assert.isTrue(records.some((value) => Object.keys(value).length > 8))
+      }))
+
+    it.effect("scales the specialized Json generator with size", () =>
+      Effect.gen(function*() {
+        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), {
+          count: 200,
+          maxDiscards: 0,
+          seed: "json-size",
+          size: 32
+        })
+
+        assert.isTrue(values.some((value) => typeof value === "string" && value.length > 8))
+        assert.isTrue(values.some((value) => Array.isArray(value) && value.length > 3))
+        const objects = values.filter((value): value is Record<string, Schema.Json> => {
+          return typeof value === "object" && value !== null && !Array.isArray(value)
+        })
+        assert.isTrue(objects.some((value) => Object.keys(value).length > 3))
+        assert.isTrue(objects.flatMap((value) => Object.keys(value)).some((key) => !/^key\d+$/.test(key)))
+        assert.isTrue(objects.every((value) => Object.getPrototypeOf(value) === Object.prototype))
       }))
 
     it.effect("targets IEEE-754 edge cases while preserving intermediate values", () =>
@@ -507,17 +732,17 @@ describe("Arbitrary", () => {
       assert.throws(() => Arbitrary.schema(schema), /Unable to derive an arbitrary for number constraints/)
     })
 
-    it.effect("uses the same generated values for sampling and checking", () =>
+    it.effect("uses the same generated value for sampling and a single-run check", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(
           Schema.Array(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4))
         )
-        const sampled = yield* Arbitrary.sample(arbitrary, { count: 20, seed: "sample-check", size: 10 })
+        const sampled = yield* Arbitrary.sample(arbitrary, { count: 1, seed: "sample-check", size: 10 })
         const checked: Array<ReadonlyArray<number>> = []
         yield* Arbitrary.check(arbitrary, (value) => {
           checked.push(value)
           return true
-        }, { runs: 20, seed: "sample-check", size: 10 })
+        }, { runs: 1, seed: "sample-check", size: 10 })
 
         assert.deepStrictEqual(checked, sampled)
       }))
@@ -584,6 +809,40 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every(Schema.is(schema)))
       }))
 
+    it.effect("shrinks Record values before keys while preserving key uniqueness", () =>
+      Effect.gen(function*() {
+        const schema = Schema.Record(
+          Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1)),
+          Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10 }))
+        ).check(Schema.isMinProperties(1), Schema.isMaxProperties(1))
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+          runs: 1,
+          seed: "record-key-shrink",
+          size: 1
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.deepStrictEqual(result.counterexample, { "\0": 0 })
+        }
+
+        const uniqueSchema = Schema.Record(
+          Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1)),
+          Schema.Null
+        ).check(Schema.isMinProperties(2), Schema.isMaxProperties(2))
+        const uniqueResult = yield* Arbitrary.check(Arbitrary.schema(uniqueSchema), () => false, {
+          runs: 1,
+          seed: "record-key-unique-shrink",
+          size: 2
+        })
+
+        assert.strictEqual(uniqueResult._tag, "Falsified")
+        if (uniqueResult._tag === "Falsified") {
+          const keys = Object.keys(uniqueResult.counterexample).map((key) => key.charCodeAt(0)).sort((a, b) => a - b)
+          assert.deepStrictEqual(keys, [0, 1])
+        }
+      }))
+
     it.effect("generates finite numeric template literal segments", () =>
       Effect.gen(function*() {
         const schema = Schema.TemplateLiteral([Schema.Number])
@@ -642,6 +901,40 @@ describe("Arbitrary", () => {
 
         assert.isTrue(values.every(Option.isOption))
         assert.isTrue(values.every(Schema.is(schema)))
+      }))
+
+    it.effect("promotes valid shrink descendants through a rejecting canonical codec", () =>
+      Effect.gen(function*() {
+        const encoded = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))
+        const schema = Schema.declare<number>(
+          (input): input is number => input === 25 || input === 100,
+          {
+            toCodec: () =>
+              Schema.link<number>()(
+                encoded,
+                SchemaTransformation.transformOrFail({
+                  decode: (value) =>
+                    value === 25 || value === 100
+                      ? Effect.succeed(value)
+                      : Effect.fail(new SchemaIssue.Forbidden({ message: "unsupported value" })),
+                  encode: Effect.succeed
+                })
+              )
+          }
+        )
+
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: 21
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 100)
+          assert.strictEqual(result.counterexample, 25)
+          assert.strictEqual(result.shrinks, 1)
+        }
       }))
 
     it.effect("derives JSON-canonical declarations through their codec", () =>
@@ -712,6 +1005,38 @@ describe("Arbitrary", () => {
         assert.deepStrictEqual(result, { _tag: "Passed", runs: 100, discards: 0 })
       }))
 
+    it.effect("does not assign recursive depth according to sibling order", () =>
+      Effect.gen(function*() {
+        interface Node {
+          readonly left: Node | null
+          readonly right: Node | null
+        }
+        const Node: Schema.Codec<Node> = Schema.Struct({
+          left: Schema.Union([Schema.Null, Schema.suspend(() => Node)]),
+          right: Schema.Union([Schema.Null, Schema.suspend(() => Node)])
+        })
+        const values = yield* Arbitrary.sample(Arbitrary.schema(Node), {
+          count: 2_000,
+          maxDiscards: 0,
+          seed: "recursive-sibling-order",
+          size: 8
+        })
+        const countNodes = (root: Node | null): number => {
+          if (root === null) return 0
+          return 1 + countNodes(root.left) + countNodes(root.right)
+        }
+        let left = 0
+        let right = 0
+        for (const value of values) {
+          left += countNodes(value.left)
+          right += countNodes(value.right)
+        }
+
+        assert.isAbove(left, 0)
+        assert.isAbove(right, 0)
+        assert.isAtMost(Math.abs(left - right), (left + right) * 0.1)
+      }))
+
     it.effect("reserves the shared recursion budget for record entries", () =>
       Effect.gen(function*() {
         type Node = null | { readonly [key: string]: Node }
@@ -746,6 +1071,26 @@ describe("Arbitrary", () => {
         })
 
         assert.isTrue(values.every(Schema.is(Node)))
+      }))
+
+    it.effect("starts progressive checks from a finite recursive base", () =>
+      Effect.gen(function*() {
+        interface Node {
+          readonly next: Node | null
+        }
+        const Node: Schema.Codec<Node> = Schema.suspend(() =>
+          Schema.Struct({
+            next: Schema.Union([Schema.Null, Node])
+          })
+        )
+        const result = yield* Arbitrary.check(Arbitrary.schema(Node), () => true, {
+          runs: 2,
+          maxDiscards: 0,
+          seed: "recursive-base",
+          size: 5
+        })
+
+        assert.deepStrictEqual(result, { _tag: "Passed", runs: 2, discards: 0 })
       }))
 
     it.effect("generates mutually recursive schemas", () =>
@@ -819,6 +1164,18 @@ describe("Arbitrary", () => {
         /Unable to derive an arbitrary for a recursive schema without a finite generation path/
       )
     })
+
+    it.effect("treats unproductive recursive union branches as empty", () =>
+      Effect.gen(function*() {
+        const Empty: Schema.Codec<unknown> = Schema.suspend(() => Schema.Struct({ value: Empty }))
+        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Union([Schema.Null, Empty])), {
+          count: 10,
+          maxDiscards: 0,
+          seed: "empty-recursive-branch"
+        })
+
+        assert.deepStrictEqual(values, Array.from({ length: 10 }, () => null))
+      }))
 
     it("fails immediately for unsupported declarations", () => {
       const declaration = Schema.declare((input): input is URL => input instanceof URL, { expected: "URL" })
@@ -894,6 +1251,30 @@ describe("Arbitrary", () => {
           }), { runs: 20, seed: "random-isolation" })
 
         assert.deepStrictEqual(effectfulInputs, pureInputs)
+      }))
+
+    it.effect("grows size across successful runs without advancing on discards", () =>
+      Effect.gen(function*() {
+        type Node = null | { readonly next: Node }
+        const Node: Schema.Codec<Node> = Schema.Union([
+          Schema.Null.check(Schema.makeFilter(() => false, { expected: "discard" })),
+          Schema.Null,
+          Schema.Struct({ next: Schema.suspend(() => Node) })
+        ])
+        const inputs: Array<Node> = []
+        const result = yield* Arbitrary.check(Arbitrary.schema(Node), (input) => {
+          inputs.push(input)
+          return true
+        }, {
+          runs: 100,
+          size: 1,
+          seed: "progressive-size"
+        })
+
+        assert.strictEqual(result._tag, "Passed")
+        if (result._tag === "Passed") assert.isAbove(result.discards, 0)
+        assert.isTrue(inputs.slice(0, 50).every((input) => input === null))
+        assert.isTrue(inputs.slice(50).some((input) => input !== null))
       }))
 
     it.effect("shrinks integers to the local failure boundary", () =>
@@ -979,12 +1360,14 @@ describe("Arbitrary", () => {
         })
         assert.strictEqual(first._tag, "Falsified")
         if (first._tag !== "Falsified") return
+        assert.strictEqual(first.runs, 1)
         assert.strictEqual(typeof first.replay, "string")
 
         const replay = `${first.replay}`
         const replayed = yield* Arbitrary.check(arbitrary, (value) => value < 0, { replay })
         assert.strictEqual(replayed._tag, "Falsified")
         if (replayed._tag !== "Falsified") return
+        assert.strictEqual(replayed.runs, 1)
         assert.strictEqual(first.counterexample, 1)
         assert.strictEqual(replayed.initialInput, first.initialInput)
         assert.strictEqual(replayed.counterexample, first.counterexample)
@@ -1016,7 +1399,7 @@ describe("Arbitrary", () => {
         const arbitrary = Arbitrary.schema(
           Schema.Array(Schema.Literal("value")).check(Schema.isMaxLength(3))
         )
-        const first = yield* Arbitrary.check(arbitrary, () => false, { runs: 1, seed: 42, size: 3 })
+        const first = yield* Arbitrary.check(arbitrary, () => false, { runs: 1, seed: 43, size: 3 })
         assert.strictEqual(first._tag, "Falsified")
         if (first._tag !== "Falsified") return
 

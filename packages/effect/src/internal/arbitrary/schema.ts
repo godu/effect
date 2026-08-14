@@ -1,7 +1,6 @@
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
-import * as Exit from "../../Exit.ts"
 import * as Hash from "../../Hash.ts"
 import * as Option from "../../Option.ts"
 import * as Order from "../../Order.ts"
@@ -136,20 +135,22 @@ function collectChecks(checks: SchemaAST.Checks | undefined, inherited: Constrai
 
 function lengthBounds(
   constraint: Constraint | undefined,
-  fallbackMaximum: number,
   path: ReadonlyArray<PropertyKey>,
   label: string
-): readonly [number, number] {
+): readonly [minimum: number, maximum: number | undefined] {
   const minimum = constraint?.minLength ?? 0
-  const maximum = constraint?.maxLength ?? Math.max(minimum, fallbackMaximum)
-  if (!Number.isSafeInteger(minimum) || minimum < 0 || !Number.isSafeInteger(maximum) || maximum < minimum) {
+  const maximum = constraint?.maxLength
+  if (
+    !Number.isSafeInteger(minimum) || minimum < 0 ||
+    maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < minimum)
+  ) {
     throw arbitraryError(`${label} constraints`, path)
   }
   return [minimum, maximum]
 }
 
 function constant<A>(value: A): Model.Compiled<A> {
-  return Model.makeCompiled([], () => 0, () => Effect.succeed(Model.generated(Model.makeSample(value))))
+  return Model.makeCompiled([], () => 0, () => Model.generated(Model.makeSample(value)))
 }
 
 function replaceAt<A>(values: ReadonlyArray<A>, index: number, value: A): Array<A> {
@@ -209,8 +210,22 @@ function arraySample(
 
 interface ObjectEntry {
   readonly key: PropertyKey
+  readonly keySample?: Model.Sample<PropertyKey> | undefined
   readonly sample: Model.Sample<any>
   readonly removable: boolean
+}
+
+function normalizePropertyKeySample(sample: Model.Sample<any>): Option.Option<Model.Sample<PropertyKey>> {
+  const filtered = Model.filterSample(
+    sample,
+    (value): value is string | number | symbol =>
+      typeof value === "string" || typeof value === "number" || typeof value === "symbol"
+  )
+  return Option.isNone(filtered)
+    ? Option.none()
+    : Option.some(
+      Model.mapSample(filtered.value, (value) => typeof value === "symbol" ? value : globalThis.String(value))
+    )
 }
 
 function objectSample(
@@ -234,6 +249,25 @@ function objectSample(
         )
       ]
   )
+  // Key shrinking uses the same uniqueness-preserving descendant filtering principle as fast-check v4.9.0's
+  // ArrayArbitrary (MIT). Structural removals and value shrinks retain their established precedence.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
+  const keyPulls = entries.flatMap((entry, index) => {
+    if (entry.keySample === undefined || entry.keySample.shrinks === undefined) return []
+    const filtered = Model.filterSample(
+      entry.keySample,
+      (key) => !entries.some((other, otherIndex) => otherIndex !== index && other.key === key)
+    )
+    if (Option.isNone(filtered) || filtered.value.shrinks === undefined) return []
+    return [Model.mapPull(
+      filtered.value.shrinks,
+      (keySample) =>
+        objectSample(
+          replaceAt(entries, index, { ...entry, key: keySample.value, keySample }),
+          minimum
+        )
+    )]
+  })
   const structural: Array<() => Model.Sample<Record<PropertyKey, any>>> = entries.length <= minimum
     ? []
     : entries.flatMap((entry, index) =>
@@ -241,9 +275,10 @@ function objectSample(
         ? [() => objectSample(entries.slice(0, index).concat(entries.slice(index + 1)), minimum)]
         : []
     )
+  const descendantPulls = [...childPulls, ...keyPulls]
   const pulls = structural.length === 0
-    ? childPulls
-    : [Model.mapPull(Model.pullFromArray(structural), (make) => make()), ...childPulls]
+    ? descendantPulls
+    : [Model.mapPull(Model.pullFromArray(structural), (make) => make()), ...descendantPulls]
   return Model.makeSample(make(entries), pulls.length === 0 ? undefined : Model.concatPulls(pulls))
 }
 
@@ -251,10 +286,11 @@ const generateWithReservedBudget = (
   child: Model.Compiled<any>,
   state: Model.GenerationState,
   reserved: number
-): Effect.Effect<Model.Attempt<any>> => {
-  if (child.minCost + reserved > state.budget.remaining) return Effect.succeed(Model.discarded)
+): Model.Generation<any> => {
+  if (child.minCost + reserved > state.budget.remaining) return Model.discarded
+  if (reserved === 0) return child.generate(state)
   state.budget.remaining -= reserved
-  return Effect.mapEager(child.generate(state), (attempt) => {
+  return Model.mapGeneration(child.generate(state), (attempt) => {
     state.budget.remaining += reserved
     return attempt
   })
@@ -264,41 +300,105 @@ const generateSamples = (
   children: ReadonlyArray<Model.Compiled<any>>,
   state: Model.GenerationState,
   additionalReserved = 0
-): Effect.Effect<Option.Option<Array<Model.Sample<any>>>> => {
+): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
   let reserved = sumCosts(children.map((child) => child.minCost)) + additionalReserved
-  if (reserved > state.budget.remaining) return Effect.succeed(Option.none())
-  const out: Array<Model.Sample<any>> = []
+  if (reserved > state.budget.remaining) return Option.none()
+  const order = children.map((_, index) => index)
+  const recursive = order.filter((index) => children[index].mayRecurse)
+  if (recursive.length > 1) {
+    const shuffled = Model.shuffle(state, recursive)
+    let next = 0
+    for (let index = 0; index < order.length; index++) {
+      if (children[index].mayRecurse) order[index] = shuffled[next++]
+    }
+  }
+  const out = new Array<Model.Sample<any>>(children.length)
   let index = 0
-  const loop = (): Effect.Effect<Option.Option<Array<Model.Sample<any>>>> => {
-    while (index < children.length) {
-      const child = children[index++]
+  const loop = (): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
+    while (index < order.length) {
+      const childIndex = order[index++]
+      const child = children[childIndex]
       reserved -= child.minCost
       const generated = generateWithReservedBudget(child, state, reserved)
-      if (Exit.isExit(generated) && generated._tag === "Success") {
-        const attempt = generated.value as Model.Attempt<any>
-        if (attempt._tag === "Discarded") return Effect.succeed(Option.none())
-        out.push(attempt.sample)
+      if (Model.isAttempt(generated)) {
+        const attempt = generated
+        if (attempt._tag === "Discarded") return Option.none()
+        out[childIndex] = attempt.sample
         continue
       }
-      return Effect.flatMap(generated, (attempt) => {
+      return Effect.flatMapEager(generated, (attempt) => {
         if (attempt._tag === "Discarded") return Effect.succeed(Option.none())
-        out.push(attempt.sample)
-        return loop()
+        out[childIndex] = attempt.sample
+        return Model.toEffect(loop())
       })
     }
-    return Effect.succeed(Option.some(out))
+    return Option.some(out)
   }
   return loop()
 }
 
 function shrinkString(value: string, minimum: number): ReadonlyArray<string> {
-  if (value.length <= minimum) return []
-  const values = [
-    value.slice(0, minimum),
-    value.slice(0, Math.max(minimum, Math.floor(value.length / 2))),
-    value.slice(0, -1)
-  ]
+  const values = value.length <= minimum
+    ? []
+    : [
+      value.slice(0, minimum),
+      value.slice(0, Math.max(minimum, Math.floor(value.length / 2))),
+      value.slice(0, -1)
+    ]
+  // fast-check v4.9.0 builds strings from shrinkable units (MIT). Effect keeps UTF-16 code units as the native domain
+  // and applies its integer-halving shrink toward the Effect-owned null-unit target.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/string.ts
+  for (let index = 0; index < value.length; index++) {
+    for (const candidate of shrinkInteger(value.charCodeAt(index), 0, true)) {
+      values.push(
+        value.slice(0, index) + globalThis.String.fromCharCode(candidate.value) + value.slice(index + 1)
+      )
+    }
+  }
   return [...new Set(values)].filter((candidate) => candidate !== value)
+}
+
+// Edge-case injection is inspired by fast-check v4.9.0's cached dangerous slices (MIT). The concrete corpus is
+// Effect-owned and also covers control, numeric-property, and UTF-16 boundaries.
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/SlicesForStringBuilder.ts
+const stringEdgeCases = [
+  "",
+  " ",
+  "\t",
+  "\n",
+  "\0",
+  "0",
+  "-1",
+  "4294967295",
+  "__proto__",
+  "constructor",
+  "prototype",
+  "toString",
+  "\uD800",
+  "\uDC00",
+  "😀"
+] as const
+
+function randomString(state: Model.GenerationState, minimum: number, maximum: number): string {
+  if (Model.randomInt(state, 1, state.biasFactor) === 1) {
+    let eligible = 0
+    for (const value of stringEdgeCases) {
+      if (value.length >= minimum && value.length <= maximum) eligible++
+    }
+    if (eligible > 0) {
+      let target = Model.randomIndex(state, eligible)
+      for (const value of stringEdgeCases) {
+        if (value.length < minimum || value.length > maximum) continue
+        if (target-- === 0) return value
+      }
+    }
+  }
+  const length = Model.randomLength(state, minimum, maximum)
+  let value = ""
+  for (let index = 0; index < length; index++) {
+    value += globalThis.String.fromCharCode(Model.randomInt(state, 32, 126))
+  }
+  return value
 }
 
 function numberBounds(constraint: Constraint | undefined, integer: boolean, path: ReadonlyArray<PropertyKey>) {
@@ -506,11 +606,7 @@ function makeJson(): Model.Compiled<unknown> {
       case 2:
         return Model.makeSample(Model.randomBoolean(state))
       default: {
-        const length = Model.randomInt(state, 0, 8)
-        let value = ""
-        for (let index = 0; index < length; index++) {
-          value += globalThis.String.fromCharCode(Model.randomInt(state, 32, 126))
-        }
+        const value = randomString(state, 0, state.size)
         return state.shrinks
           ? Model.sampleFromShrink(value, (value) => shrinkString(value, 0))
           : Model.makeSample(value)
@@ -520,26 +616,49 @@ function makeJson(): Model.Compiled<unknown> {
   self = Model.makeCompiled<unknown>(
     [],
     () => 0,
-    Effect.fnUntraced(function*(state) {
+    (state) => {
       const canRecur = state.budget.remaining > 0
       const choice = Model.randomIndex(state, canRecur ? 6 : 4)
       if (choice < 4) return Model.generated(leaf(state))
       state.budget.remaining--
-      const length = Model.randomInt(state, 0, Math.max(0, Math.min(3, state.size)))
-      const children = yield* generateSamples(Array.from({ length }, () => self), state)
-      if (Option.isNone(children)) return Model.discarded
-      if (choice === 4) {
-        return Model.generated(arraySample(children.value, {
-          fixedCount: 0,
-          optionalCount: 0,
-          repeatCount: children.value.length,
-          tailCount: 0,
-          minimum: 0
-        }, state.shrinks))
-      }
-      const entries = children.value.map((sample, index) => ({ key: `key${index}`, sample, removable: true }))
-      return Model.generated(objectSample(entries, 0, state.shrinks))
-    })
+      const length = Model.randomLength(state, 0, state.size)
+      return Model.mapComputation(generateSamples(Array.from({ length }, () => self), state), (children) => {
+        if (Option.isNone(children)) return Model.discarded
+        if (choice === 4) {
+          return Model.generated(arraySample(children.value, {
+            fixedCount: 0,
+            optionalCount: 0,
+            repeatCount: children.value.length,
+            tailCount: 0,
+            minimum: 0
+          }, state.shrinks))
+        }
+        // Bounded duplicate retries follow fast-check v4.9.0's ArrayArbitrary uniqueness strategy (MIT), adapted here
+        // to JSON member names so generation cannot wait indefinitely on collisions.
+        // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
+        const keys: Array<Model.Sample<string>> = []
+        const seen = new Set<string>()
+        for (let index = 0; index < length; index++) {
+          let key = randomString(state, 0, state.size)
+          let retries = 0
+          while (seen.has(key)) {
+            if (++retries >= 10) return Model.discarded
+            key = randomString(state, 0, state.size)
+          }
+          seen.add(key)
+          keys.push(
+            state.shrinks ? Model.sampleFromShrink(key, (value) => shrinkString(value, 0)) : Model.makeSample(key)
+          )
+        }
+        const entries = children.value.map((sample, index) => ({
+          key: keys[index].value,
+          keySample: keys[index],
+          sample,
+          removable: true
+        }))
+        return Model.generated(objectSample(entries, 0, state.shrinks))
+      })
+    }
   )
   self.minCost = 0
   return self
@@ -575,9 +694,141 @@ function makeRegExp(): Model.Compiled<globalThis.RegExp> {
       let flags = ""
       for (const flag of regExpFlags) if (Model.randomBoolean(state)) flags += flag
       const value = new globalThis.RegExp(source, flags)
-      return Effect.succeed(Model.generated(
+      return Model.generated(
         state.shrinks ? Model.sampleFromShrink(value, shrinkRegExp) : Model.makeSample(value)
-      ))
+      )
+    }
+  )
+  compiled.minCost = 0
+  return compiled
+}
+
+const lowerAlphaCharacters = "abcdefghijklmnopqrstuvwxyz"
+const lowerAlphaNumericCharacters = `${lowerAlphaCharacters}0123456789`
+const webSegmentCharacters = `${lowerAlphaNumericCharacters}${lowerAlphaCharacters.toUpperCase()}-._~`
+
+function randomCharacters(
+  state: Model.GenerationState,
+  characters: string,
+  minimum: number,
+  maximum: number
+): string {
+  const length = Model.randomLength(state, minimum, maximum)
+  let out = ""
+  for (let index = 0; index < length; index++) {
+    out += characters[Model.randomIndex(state, characters.length)]
+  }
+  return out
+}
+
+function randomDnsLabel(state: Model.GenerationState, maximum: number): string {
+  const length = Model.randomLength(state, 1, maximum)
+  if (length === 1) return lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
+  const first = lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
+  const middle = randomCharacters(state, `${lowerAlphaNumericCharacters}-`, length - 2, length - 2)
+  const last = lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
+  const label = `${first}${middle}${last}`
+  return label.startsWith("xn--") ? `${label.slice(0, 2)}0${label.slice(3)}` : label
+}
+
+function randomDomain(state: Model.GenerationState): string {
+  const maximumLabels = Math.min(126, Math.max(1, state.size))
+  const labelCount = Model.randomLength(state, 1, maximumLabels)
+  const contentBudget = 255 - labelCount
+  const labels: Array<string> = []
+  let used = 0
+  for (let index = 0; index < labelCount; index++) {
+    const remainingMinimum = labelCount - index - 1 + 2
+    const maximum = Math.min(63, Math.max(1, state.size), contentBudget - used - remainingMinimum)
+    const label = randomDnsLabel(state, maximum)
+    labels.push(label)
+    used += label.length
+  }
+  const maximumSuffix = Math.min(63, Math.max(2, state.size), contentBudget - used)
+  labels.push(randomCharacters(state, lowerAlphaCharacters, 2, maximumSuffix))
+  return labels.join(".")
+}
+
+function shrinkURL(value: globalThis.URL): ReadonlyArray<globalThis.URL> {
+  const candidates: Array<globalThis.URL> = []
+  if (value.protocol === "https:") {
+    const candidate = new globalThis.URL(value.href)
+    candidate.protocol = "http:"
+    candidates.push(candidate)
+  }
+  if (value.hostname !== "a.aa") {
+    const candidate = new globalThis.URL(value.href)
+    candidate.hostname = "a.aa"
+    candidates.push(candidate)
+  }
+  if (value.pathname !== "/") {
+    const candidate = new globalThis.URL(value.href)
+    candidate.pathname = "/"
+    candidates.push(candidate)
+  }
+  return [...new Map(candidates.map((candidate) => [candidate.href, candidate])).values()]
+}
+
+function makeURL(): Model.Compiled<globalThis.URL> {
+  const compiled = Model.makeCompiled(
+    [],
+    () => 0,
+    (state) => {
+      // The scheme + DNS authority + path composition follows fast-check v4.9.0's webUrl model (MIT), implemented
+      // independently on the Effect-owned generator and shrink carrier.
+      // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/webUrl.ts
+      const scheme = Model.randomBoolean(state) ? "http" : "https"
+      const dimension = Math.ceil(Math.sqrt(state.size))
+      const segmentCount = dimension === 0 ? 0 : Model.randomLength(state, 0, dimension)
+      let path = ""
+      for (let index = 0; index < segmentCount; index++) {
+        path += `/${randomCharacters(state, webSegmentCharacters, 0, dimension)}`
+      }
+      const value = new globalThis.URL(`${scheme}://${randomDomain(state)}${path}`)
+      return Model.generated(
+        state.shrinks ? Model.sampleFromShrink(value, shrinkURL) : Model.makeSample(value)
+      )
+    }
+  )
+  compiled.minCost = 0
+  return compiled
+}
+
+const minimumDateTimestamp = -8_640_000_000_000_000
+const maximumDateTimestamp = 8_640_000_000_000_000
+
+function makeDate(
+  ordered: OrderedConstraint | undefined,
+  path: ReadonlyArray<PropertyKey>
+): Model.Compiled<globalThis.Date> {
+  let minimum = minimumDateTimestamp
+  let maximum = maximumDateTimestamp
+  if (ordered?.minimum !== undefined) {
+    const timestamp = (ordered.minimum as globalThis.Date).getTime()
+    if (Number.isNaN(timestamp)) throw arbitraryError("date constraints", path)
+    minimum = Math.max(minimum, timestamp + (ordered.exclusiveMinimum === true ? 1 : 0))
+  }
+  if (ordered?.maximum !== undefined) {
+    const timestamp = (ordered.maximum as globalThis.Date).getTime()
+    if (Number.isNaN(timestamp)) throw arbitraryError("date constraints", path)
+    maximum = Math.min(maximum, timestamp - (ordered.exclusiveMaximum === true ? 1 : 0))
+  }
+  if (minimum > maximum) throw arbitraryError("date constraints", path)
+  // Like fast-check v4.9.0's date arbitrary (MIT), valid dates are generated by mapping the complete JavaScript
+  // timestamp interval instead of filtering ISO strings. Effect reuses its native integer bias and shrink carrier.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/date.ts
+  const randomTimestamp = Model.makeRandomNumericInt(minimum, maximum)
+  const compiled = Model.makeCompiled(
+    [],
+    () => 0,
+    (state) => {
+      const timestamp = randomTimestamp(state)
+      const sample = numberSample(timestamp, minimum, maximum, true)
+      return Model.generated(
+        state.shrinks
+          ? Model.mapSample(sample, (timestamp) => new globalThis.Date(timestamp))
+          : Model.makeSample(new globalThis.Date(timestamp))
+      )
     }
   )
   compiled.minCost = 0
@@ -593,10 +844,39 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   const suspendBodies = new Map<Model.Compiled<any>, Model.Compiled<any>>()
   const pending: Array<() => void> = []
   const json = makeJson()
-  const constructors: Annotation.Constructors = {
+  const uint8ArrayRepresentation = Schema.Array(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))
+  ).ast
+  const makeConstructors = (
+    constraint: Constraint | undefined,
+    path: ReadonlyArray<PropertyKey>
+  ): Annotation.Constructors => ({
+    Date: () =>
+      makeDate(
+        constraint?.ordered?.order === Order.Date ? constraint.ordered : undefined,
+        path
+      ) as unknown as Annotation.Arbitrary<globalThis.Date>,
     Json: () => json as unknown as Annotation.Arbitrary<any>,
-    RegExp: () => makeRegExp() as unknown as Annotation.Arbitrary<globalThis.RegExp>
-  }
+    RegExp: () => makeRegExp() as unknown as Annotation.Arbitrary<globalThis.RegExp>,
+    Uint8Array: () => {
+      // Like fast-check v4.9.0's typed integer array builder (MIT), reuse Array<Integer> generation and its complete
+      // shrink tree, then map the representation to the typed array without Base64 filtering.
+      // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/builders/TypedIntArrayArbitraryBuilder.ts
+      const array = recur(uint8ArrayRepresentation, path, constraint)
+      const compiled = Model.makeCompiled(
+        [array],
+        () => array.minCost,
+        (state) =>
+          Model.mapGeneration(array.generate(state), (attempt) =>
+            attempt._tag === "Discarded"
+              ? Model.discarded
+              : Model.generated(Model.mapSample(attempt.sample, (values) => globalThis.Uint8Array.from(values))))
+      )
+      compiled.minCost = 0
+      return compiled as unknown as Annotation.Arbitrary<globalThis.Uint8Array<ArrayBufferLike>>
+    },
+    URL: () => makeURL() as unknown as Annotation.Arbitrary<globalThis.URL>
+  })
 
   const recur = (
     ast: SchemaAST.AST,
@@ -631,7 +911,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               if (state.budget.remaining <= 0) return Effect.succeed(Model.discarded)
               state.budget.remaining--
             }
-            return body.generate(state)
+            return Model.toEffectGeneration(body.generate(state))
           })
         suspendBodies.set(placeholder, body)
       } else {
@@ -642,7 +922,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       if (checks.filters.length > 0) {
         const generate = placeholder.generate
         placeholder.generate = (state) =>
-          Effect.mapEager(generate(state), (attempt) => {
+          Model.mapGeneration(generate(state), (attempt) => {
             if (attempt._tag === "Discarded") return Model.discarded
             const sample = Model.filterSample(
               attempt.sample,
@@ -679,10 +959,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           () => 0,
           (state) => {
             const value = Model.randomBoolean(state)
-            return Effect.succeed(Model.generated(Model.makeSample(
+            return Model.generated(Model.makeSample(
               value,
               state.shrinks && value ? Model.pullFromArray([Model.makeSample(false)]) : undefined
-            )))
+            ))
           }
         )
       case "String": {
@@ -692,25 +972,24 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           pattern = Regexp.compile(constraint)
           if (pattern !== undefined) break
         }
-        const patternMinimum = pattern?.minimumLength ?? 0
-        const [minimum, maximum] = lengthBounds(constraint, Math.max(16, patternMinimum), path, "string")
+        const [minimum, maximum] = lengthBounds(constraint, path, "string")
+        if (pattern !== undefined && maximum !== undefined && !pattern.hasLengthBetween(minimum, maximum)) {
+          throw arbitraryError("string constraints", path)
+        }
         return Model.makeCompiled(
           [],
           () => 0,
           (state) => {
-            const upper = Math.min(maximum, Math.max(minimum, pattern?.minimumLength ?? 0, state.size * 2))
+            const currentMaximum = Math.max(minimum, pattern?.minimumLength ?? 0, state.size)
+            const upper = maximum === undefined ? currentMaximum : Math.min(maximum, currentMaximum)
             let value: string | undefined
             if (pattern === undefined) {
-              const length = Model.randomInt(state, minimum, upper)
-              value = ""
-              for (let index = 0; index < length; index++) {
-                value += globalThis.String.fromCharCode(Model.randomInt(state, 32, 126))
-              }
+              value = randomString(state, minimum, upper)
             } else {
               value = pattern.generate(state, minimum, upper)
             }
-            if (value === undefined) return Effect.succeed(Model.discarded)
-            return Effect.succeed(Model.generated(
+            if (value === undefined) return Model.discarded
+            return Model.generated(
               state.shrinks
                 ? Model.sampleFromShrink(
                   value,
@@ -719,7 +998,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                     : (value) => pattern.shrink(value, minimum)
                 )
                 : Model.makeSample(value)
-            ))
+            )
           }
         )
       }
@@ -766,11 +1045,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             const value = integer
               ? randomInteger!(state)
               : randomNumber!(state)
-            return Effect.succeed(Model.generated(
+            return Model.generated(
               state.shrinks
                 ? numberSample(value, bounds.minimum, bounds.maximum, integer)
                 : Model.makeSample(value)
-            ))
+            )
           }
         )
       }
@@ -804,11 +1083,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               randomBigInt = Model.makeRandomNumericBigInt(low, high)
             }
             const value = randomBigInt(state)
-            return Effect.succeed(Model.generated(
+            return Model.generated(
               state.shrinks
                 ? Model.sampleFromShrink(value, (value) => value === BigInt(0) ? [] : [BigInt(0)])
                 : Model.makeSample(value)
-            ))
+            )
           }
         )
       }
@@ -818,7 +1097,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           [strings],
           () => strings.minCost,
           (state) =>
-            Effect.mapEager(strings.generate(state), (attempt) =>
+            Model.mapGeneration(strings.generate(state), (attempt) =>
               attempt._tag === "Discarded"
                 ? attempt
                 : Model.generated(Model.mapSample(attempt.sample, (value) => Symbol.for(value))))
@@ -831,15 +1110,16 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           [json],
           () => 0,
-          Effect.fnUntraced(function*(state) {
-            const attempt = yield* json.generate(state)
-            if (
-              attempt._tag === "Generated" && typeof attempt.sample.value === "object" && attempt.sample.value !== null
-            ) {
-              return attempt
-            }
-            return Model.generated(Model.makeSample({}))
-          })
+          (state) =>
+            Model.mapGeneration(json.generate(state), (attempt) => {
+              if (
+                attempt._tag === "Generated" && typeof attempt.sample.value === "object" &&
+                attempt.sample.value !== null
+              ) {
+                return attempt
+              }
+              return Model.generated(Model.makeSample({}))
+            })
         )
       case "Enum": {
         const values = [...new Set(ast.enums.map(([, value]) => value))]
@@ -847,7 +1127,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           [],
           () => 0,
-          (state) => Effect.succeed(Model.generated(Model.makeSample(values[Model.randomIndex(state, values.length)])))
+          (state) => Model.generated(Model.makeSample(values[Model.randomIndex(state, values.length)]))
         )
       }
       case "TemplateLiteral": {
@@ -855,18 +1135,18 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           parts,
           () => sumCosts(parts.map((part) => part.minCost)),
-          Effect.fnUntraced(function*(state) {
-            const generated = yield* generateSamples(parts, state)
-            if (Option.isNone(generated)) return Model.discarded
-            const sample = arraySample(generated.value, {
-              fixedCount: generated.value.length,
-              optionalCount: 0,
-              repeatCount: 0,
-              tailCount: 0,
-              minimum: generated.value.length
-            }, state.shrinks)
-            return Model.generated(Model.mapSample(sample, (parts) => parts.map(globalThis.String).join("")))
-          })
+          (state) =>
+            Model.mapComputation(generateSamples(parts, state), (generated) => {
+              if (Option.isNone(generated)) return Model.discarded
+              const sample = arraySample(generated.value, {
+                fixedCount: generated.value.length,
+                optionalCount: 0,
+                repeatCount: 0,
+                tailCount: 0,
+                minimum: generated.value.length
+              }, state.shrinks)
+              return Model.generated(Model.mapSample(sample, (parts) => parts.map(globalThis.String).join("")))
+            })
         )
       }
       case "Union": {
@@ -875,12 +1155,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           members,
           () => Math.min(...members.map((member) => member.minCost)),
-          Effect.fnUntraced(
-            function*(state) {
-              const eligible = members.filter((member) => member.minCost <= state.budget.remaining)
-              if (eligible.length === 0) return Model.discarded
-              const selected = eligible[Model.randomIndex(state, eligible.length)]
-              const attempt = yield* selected.generate(state)
+          (state) => {
+            const eligible = members.filter((member) => member.minCost <= state.budget.remaining)
+            if (eligible.length === 0) return Model.discarded
+            const selected = eligible[Model.randomIndex(state, eligible.length)]
+            return Model.mapGeneration(selected.generate(state), (attempt) => {
               if (!state.shrinks || attempt._tag === "Discarded") return attempt
               let fallback = members[0]
               for (let index = 1; index < members.length; index++) {
@@ -896,7 +1175,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 if (pulled) return Cause.done()
                 pulled = true
                 return Effect.flatMapEager(
-                  fallback.generate({ ...state, budget: { remaining: fallback.minCost } }),
+                  Model.toEffectGeneration(
+                    fallback.generate({ ...state, budget: { remaining: fallback.minCost } })
+                  ),
                   (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt.sample) : Cause.done()
                 )
               })
@@ -906,8 +1187,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                   ? fallbackPull
                   : Model.concatPulls([fallbackPull, attempt.sample.shrinks])
               ))
-            }
-          )
+            })
+          }
         )
       }
       case "Arrays":
@@ -938,8 +1219,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     const rest = ast.rest.map((element, index) => recur(element, [...path, elements.length + index]))
     const head = rest[0]
     const tail = rest.slice(1)
-    const [minimum, maximum] = lengthBounds(constraint, Math.max(elements.length + tail.length, 8), path, "array")
-    if (head === undefined && (minimum > elements.length || maximum < required)) {
+    const [minimum, maximum] = lengthBounds(constraint, path, "array")
+    if (
+      maximum !== undefined && maximum < required + tail.length ||
+      head === undefined && minimum > elements.length + tail.length
+    ) {
       throw arbitraryError("array constraints", path)
     }
     const dependencies = [...elements.map((element) => element.compiled), ...rest]
@@ -947,11 +1231,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       const out: Array<readonly [number, number, number]> = []
       const requiredCost = sumCosts(elements.slice(0, required).map((element) => element.compiled.minCost))
       const tailCost = sumCosts(tail.map((element) => element.minCost))
+      const currentMaximum = Math.max(minimum, required + tail.length, limit)
+      const upper = maximum === undefined ? currentMaximum : Math.min(maximum, currentMaximum)
       for (let optionalCount = 0; optionalCount <= optional; optionalCount++) {
         const fixed = required + optionalCount + tail.length
         const minimumRepeat = Math.max(0, minimum - fixed)
-        const maximumRepeat = head === undefined ? 0 : Math.max(minimumRepeat, Math.min(maximum - fixed, limit))
-        if (fixed + minimumRepeat > maximum || head === undefined && minimumRepeat > 0) continue
+        const maximumRepeat = head === undefined ? 0 : Math.max(minimumRepeat, upper - fixed)
+        if (fixed + minimumRepeat > upper || head === undefined && minimumRepeat > 0) continue
         const optionalCost = sumCosts(
           elements.slice(required, required + optionalCount).map((element) => element.compiled.minCost)
         )
@@ -971,11 +1257,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return possible.length === 0 ? infinity : Math.min(...possible.map(([, , cost]) => cost))
       },
       (state) => {
-        const possible = combinations(Math.max(minimum, state.size)).filter(([, , cost]) =>
-          cost <= state.budget.remaining
-        )
-        if (possible.length === 0) return Effect.succeed(Model.discarded)
-        const [optionalCount, repeatCount] = possible[Model.randomIndex(state, possible.length)]
+        const possible = combinations(state.size).filter(([, , cost]) => cost <= state.budget.remaining)
+        if (possible.length === 0) return Model.discarded
+        const [optionalCount, repeatCount] = possible[Model.randomLength(state, 0, possible.length - 1)]
         const selected = [
           ...elements.slice(0, required + optionalCount).map((element) => element.compiled),
           ...Array.from({ length: repeatCount }, () => head!),
@@ -990,7 +1274,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             minimum
           }, state.shrinks))
         if (constraint?.unique !== true) {
-          return Effect.mapEager(
+          return Model.mapComputation(
             generateSamples(selected, state),
             (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
           )
@@ -1025,19 +1309,19 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         let index = 0
         let retries = 0
         let budget = state.budget.remaining
-        const loop = (): Effect.Effect<Model.Attempt<ReadonlyArray<any>>> => {
+        const loop = (): Model.Generation<ReadonlyArray<any>> => {
           while (index < selected.length) {
             const child = selected[index]
             if (retries === 0) {
               reserved -= child.minCost
               budget = state.budget.remaining
             }
-            const effect = generateWithReservedBudget(child, state, reserved)
-            if (Exit.isExit(effect) && effect._tag === "Success") {
-              const attempt = effect.value as Model.Attempt<any>
-              if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+            const generatedChild = generateWithReservedBudget(child, state, reserved)
+            if (Model.isAttempt(generatedChild)) {
+              const attempt = generatedChild
+              if (attempt._tag === "Discarded") return Model.discarded
               if (!addUnique(attempt.sample.value)) {
-                if (++retries >= maximumRetries) return Effect.succeed(Model.discarded)
+                if (++retries >= maximumRetries) return Model.discarded
                 state.budget.remaining = budget
                 continue
               }
@@ -1046,7 +1330,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               retries = 0
               continue
             }
-            return Effect.flatMap(effect, (attempt) => {
+            return Effect.flatMapEager(generatedChild, (attempt) => {
               if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
               if (!addUnique(attempt.sample.value)) {
                 if (++retries >= maximumRetries) return Effect.succeed(Model.discarded)
@@ -1056,10 +1340,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 index++
                 retries = 0
               }
-              return loop()
+              return Model.toEffect(loop())
             })
           }
-          return Effect.succeed(makeAttempt(generated))
+          return makeAttempt(generated)
         }
         return loop()
       }
@@ -1082,8 +1366,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     }))
     const required = properties.filter((property) => !property.optional)
     const optional = properties.filter((property) => property.optional)
-    const [minimum, maximum] = lengthBounds(constraint, Math.max(properties.length, 8), path, "object property")
-    if (maximum < required.length || indexes.length === 0 && minimum > properties.length) {
+    const [minimum, maximum] = lengthBounds(constraint, path, "object property")
+    if (maximum !== undefined && maximum < required.length || indexes.length === 0 && minimum > properties.length) {
       throw arbitraryError("object property constraints", path)
     }
     const dependencies = [
@@ -1102,7 +1386,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return requiredCost + sumCosts(optionalCosts) + (need - optionalCosts.length) * indexCost
       },
       (state) => {
-        const maxOptional = Math.min(optional.length, maximum - required.length)
+        const currentMaximum = Math.max(minimum, required.length, state.size)
+        const upper = maximum === undefined ? currentMaximum : Math.min(maximum, currentMaximum)
+        const maxOptional = Math.min(optional.length, upper - required.length)
         const minOptional = indexes.length === 0 ? Math.max(0, minimum - required.length) : 0
         const optionalCount = Model.randomInt(state, minOptional, maxOptional)
         const selectedOptional = optionalCount === 0 ? [] : Model.shuffle(state, optional).slice(0, optionalCount)
@@ -1110,7 +1396,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         const minimumIndexes = Math.max(0, minimum - named.length)
         const maximumIndexes = indexes.length === 0
           ? 0
-          : Math.min(maximum - named.length, Math.max(minimumIndexes, state.size))
+          : upper - named.length
         const minimumIndexCost = indexes.length === 0
           ? infinity
           : Math.min(...indexes.map((index) => index.parameter.minCost + index.value.minCost))
@@ -1120,20 +1406,20 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           : minimumIndexCost === infinity
           ? 0
           : Math.min(maximumIndexes, Math.floor((state.budget.remaining - namedCost) / minimumIndexCost))
-        if (affordableIndexes < minimumIndexes) return Effect.succeed(Model.discarded)
-        const indexCount = Model.randomInt(state, minimumIndexes, affordableIndexes)
+        if (affordableIndexes < minimumIndexes) return Model.discarded
+        const indexCount = Model.randomLength(state, minimumIndexes, affordableIndexes)
         const indexReserved = indexCount === 0 ? 0 : indexCount * minimumIndexCost
-        return Effect.flatMapEager(
+        return Model.flatMapComputation(
           generateSamples(named.map((property) => property.compiled), state, indexReserved),
           (samples) => {
-            if (Option.isNone(samples)) return Effect.succeed(Model.discarded)
+            if (Option.isNone(samples)) return Model.discarded
             const entries: Array<ObjectEntry> = samples.value.map((sample, index) => ({
               key: named[index].property.name,
               sample,
               removable: named[index].optional
             }))
             if (indexCount === 0) {
-              return Effect.succeed(Model.generated(objectSample(entries, minimum, state.shrinks)))
+              return Model.generated(objectSample(entries, minimum, state.shrinks))
             }
             return Effect.gen(function*() {
               for (let position = 0; position < indexCount; position++) {
@@ -1145,24 +1431,28 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 const index = eligible[Model.randomIndex(state, eligible.length)]
                 const budget = state.budget.remaining
                 const reservedAfterKey = index.value.minCost + futureReserved
-                let keyAttempt = yield* generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                let keyAttempt = yield* Model.toEffectGeneration(
+                  generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                )
+                let keySample: Model.Sample<PropertyKey>
                 let retries = 0
                 while (true) {
                   if (keyAttempt._tag === "Discarded") return Model.discarded
-                  const key = keyAttempt.sample.value
-                  if (!entries.some((entry) => entry.key === key)) break
+                  const normalized = normalizePropertyKeySample(keyAttempt.sample)
+                  if (Option.isNone(normalized)) return Model.discarded
+                  keySample = normalized.value
+                  if (!entries.some((entry) => entry.key === keySample.value)) break
                   if (retries++ >= 10) return Model.discarded
                   state.budget.remaining = budget
-                  keyAttempt = yield* generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                  keyAttempt = yield* Model.toEffectGeneration(
+                    generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                  )
                 }
-                const key = keyAttempt.sample.value
-                if (
-                  (typeof key !== "string" && typeof key !== "number" && typeof key !== "symbol") ||
-                  entries.some((entry) => entry.key === key)
-                ) return Model.discarded
-                const value = yield* generateWithReservedBudget(index.value, state, futureReserved)
+                const value = yield* Model.toEffectGeneration(
+                  generateWithReservedBudget(index.value, state, futureReserved)
+                )
                 if (value._tag === "Discarded") return Model.discarded
-                entries.push({ key, sample: value.sample, removable: true })
+                entries.push({ key: keySample.value, keySample, sample: value.sample, removable: true })
               }
               return Model.generated(objectSample(entries, minimum, state.shrinks))
             })
@@ -1182,7 +1472,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     if (typeof annotation === "function") {
       const compiled = (annotation as Annotation.ToArbitrary<any>)(
         typeParameters as unknown as ReadonlyArray<Annotation.Arbitrary<unknown>>
-      )(constructors) as unknown as Model.Compiled<any>
+      )(makeConstructors(constraint, path)) as unknown as Model.Compiled<any>
       return Model.makeCompiled(
         [compiled, ...typeParameters],
         () => compiled.minCost,
@@ -1219,8 +1509,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       [target, ...typeParameters],
       () => target.minCost,
       (state) =>
-        Effect.flatMapEager(target.generate(state), (attempt) => {
-          if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+        Model.flatMapGeneration(target.generate(state), (attempt) => {
+          if (attempt._tag === "Discarded") return Model.discarded
           return Effect.mapEager(
             Model.filterMapSample(attempt.sample, decode),
             (sample) => Option.isSome(sample) ? Model.generated(sample.value) : Model.discarded
@@ -1236,6 +1526,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   for (const node of nodes) dependents.set(node, [])
   for (const node of nodes) {
     for (const dependency of node.dependencies) dependents.get(dependency)?.push(node)
+  }
+  const recursiveQueue = nodes.filter((node) => node.recursive)
+  for (let index = 0; index < recursiveQueue.length; index++) {
+    const node = recursiveQueue[index]
+    if (node.mayRecurse) continue
+    node.mayRecurse = true
+    recursiveQueue.push(...dependents.get(node)!)
   }
   const queue = nodes.slice()
   const queued = new Set(nodes)

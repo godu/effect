@@ -67,6 +67,18 @@
               "size": 128
             },
             {
+              "name": "uint8-array-sample-128-native",
+              "export": "uint8ArraySample128",
+              "scenario": "arbitrary-uint8-array-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Arrays",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
               "name": "rare-filter-sample-32-native",
               "export": "rareFilterSample32",
               "scenario": "arbitrary-rare-filter-sample-32",
@@ -167,6 +179,13 @@
               "name": "bounded-number-sample-128-fast-check-v4",
               "export": "boundedNumberSample128",
               "scenario": "arbitrary-bounded-number-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "uint8-array-sample-128-fast-check-v4",
+              "export": "uint8ArraySample128",
+              "scenario": "arbitrary-uint8-array-sample-128",
               "operation": "sample",
               "size": 128
             },

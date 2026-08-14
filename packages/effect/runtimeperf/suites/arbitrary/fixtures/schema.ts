@@ -1,5 +1,6 @@
 import type * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
+import assert from "node:assert/strict"
 
 export interface Tree {
   readonly label: string
@@ -29,3 +30,36 @@ export const makeUniqueArraySchema = () =>
     Schema.isMinLength(32),
     Schema.isMaxLength(32)
   )
+
+const validateTree = Schema.is(makeTreeSchema())
+
+const countTreeNodes = (tree: Tree): number =>
+  1 + tree.children.reduce((total, child) => total + countTreeNodes(child), 0)
+
+export const validateTrees = (count: number, minimumNodes: number, maximumNodes: number) => (values: unknown) => {
+  assert.ok(Array.isArray(values))
+  assert.equal(values.length, count)
+  assert.equal(values.every(validateTree), true)
+  const nodes = values.reduce((total, tree) => total + countTreeNodes(tree), 0)
+  assert.ok(nodes >= minimumNodes && nodes <= maximumNodes)
+}
+
+export const validateStrings = (count: number) => (values: unknown) => {
+  assert.ok(Array.isArray(values))
+  assert.equal(values.length, count)
+  assert.equal(values.every((value) => typeof value === "string" && value.length === 32), true)
+}
+
+export const validateNumbers = (count: number) => (values: unknown) => {
+  assert.ok(Array.isArray(values))
+  assert.equal(values.length, count)
+  assert.equal(values.every((value) => typeof value === "number" && value >= 2 && value <= 4), true)
+}
+
+export const validateUint8Arrays = (count: number) => (values: unknown) => {
+  assert.ok(Array.isArray(values))
+  assert.equal(values.length, count)
+  assert.equal(values.every((value) => value instanceof Uint8Array && value.length <= 10), true)
+  const bytes = values.reduce((total, value) => total + value.length, 0)
+  assert.ok(bytes >= 500 && bytes <= 700)
+}

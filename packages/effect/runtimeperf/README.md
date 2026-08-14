@@ -89,7 +89,7 @@ adapters.
 The `arbitrary` suite compares public end-to-end APIs in separate processes. It
 measures derivation through the first recursive sample, steady-state recursive
 sampling, fixed-length string generation to exercise constraint pushdown,
-bounded Number generation, a rare residual filter, a fixed-length unique array,
+bounded Number generation, direct Uint8Array generation, a rare residual filter, a fixed-length unique array,
 and literal sampling as a runner baseline. It also measures a passing property,
 a failure that shrinks from `1000` to `1`, and replay of that failure. The
 recursive distributions are implementation-defined, so the fixtures use

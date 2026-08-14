@@ -25,6 +25,12 @@ export interface Discarded {
 export type Attempt<A> = Generated<A> | Discarded
 
 /** @internal */
+export type Computation<A> = A | Effect.Effect<A>
+
+/** @internal */
+export type Generation<A> = Computation<Attempt<A>>
+
+/** @internal */
 export interface GenerationState {
   readonly size: number
   readonly shrinks: boolean
@@ -39,9 +45,10 @@ export interface GenerationState {
 export interface Compiled<A> {
   minCost: number
   recursive: boolean
+  mayRecurse: boolean
   dependencies: ReadonlyArray<Compiled<any>>
   computeMinCost: () => number
-  generate: (state: GenerationState) => Effect.Effect<Attempt<A>>
+  generate: (state: GenerationState) => Generation<A>
 }
 
 /** @internal */
@@ -49,6 +56,54 @@ export const discarded: Discarded = { _tag: "Discarded" }
 
 /** @internal */
 export const generated = <A>(sample: Sample<A>): Attempt<A> => ({ _tag: "Generated", sample })
+
+/** @internal */
+export function mapComputation<A, B>(self: Computation<A>, f: (value: A) => B): Computation<B> {
+  return Effect.isEffect(self) ? Effect.mapEager(self as Effect.Effect<A>, f) : f(self as A)
+}
+
+/** @internal */
+export function flatMapComputation<A, B>(
+  self: Computation<A>,
+  f: (value: A) => Computation<B>
+): Computation<B> {
+  return Effect.isEffect(self)
+    ? Effect.flatMapEager(self as Effect.Effect<A>, (value) => toEffect(f(value)))
+    : f(self as A)
+}
+
+/** @internal */
+export function toEffect<A>(self: Computation<A>): Effect.Effect<A> {
+  return Effect.isEffect(self) ? self as Effect.Effect<A> : Effect.succeed(self as A)
+}
+
+/** @internal */
+export function isAttempt<A>(self: Generation<A>): self is Attempt<A> {
+  return (self as Attempt<A>)._tag === "Generated" || (self as Attempt<A>)._tag === "Discarded"
+}
+
+/** @internal */
+export function mapGeneration<A, B>(
+  self: Generation<A>,
+  f: (value: Attempt<A>) => Attempt<B>
+): Generation<B> {
+  return isAttempt(self) ? f(self) : Effect.mapEager(self, f)
+}
+
+/** @internal */
+export function flatMapGeneration<A, B>(
+  self: Generation<A>,
+  f: (value: Attempt<A>) => Generation<B>
+): Generation<B> {
+  return isAttempt(self)
+    ? f(self)
+    : Effect.flatMapEager(self, (value) => toEffectGeneration(f(value)))
+}
+
+/** @internal */
+export function toEffectGeneration<A>(self: Generation<A>): Effect.Effect<Attempt<A>> {
+  return isAttempt(self) ? Effect.succeed(self) : self
+}
 
 /** @internal */
 export function pullFromArray<A>(values: ReadonlyArray<A>): Pull.Pull<A> {
@@ -192,6 +247,7 @@ export function makeCompiled<A>(
   return {
     minCost: Number.POSITIVE_INFINITY,
     recursive: false,
+    mayRecurse: false,
     dependencies,
     computeMinCost,
     generate
@@ -200,7 +256,7 @@ export function makeCompiled<A>(
 
 /** @internal */
 export function makePlaceholder<A>(): Compiled<A> {
-  return makeCompiled([], () => Number.POSITIVE_INFINITY, () => Effect.succeed(discarded))
+  return makeCompiled([], () => Number.POSITIVE_INFINITY, () => discarded)
 }
 
 /** @internal */
@@ -227,6 +283,16 @@ export const randomInt = (state: GenerationState, minimum: number, maximum: numb
     }
   }
   return Number(randomBigInt(state, BigInt(minimum), BigInt(maximum)))
+}
+
+/** @internal */
+export const randomLength = (state: GenerationState, minimum: number, maximum: number): number => {
+  if (minimum === maximum) return minimum
+  // This applies fast-check v4.9.0's run-dependent numeric edge-bias principle to the small discrete length domain
+  // (MIT): occasionally target either boundary, otherwise retain uniform selection across the complete interval.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/IntegerArbitrary.ts
+  if (randomInt(state, 1, state.biasFactor) === 1) return randomBoolean(state) ? minimum : maximum
+  return randomInt(state, minimum, maximum)
 }
 
 /** @internal */

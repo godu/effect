@@ -104,6 +104,64 @@ The module does not initially export:
 Internal code has the constructors and combinators needed to interpret Schema. Their names and representations are not
 part of the public compatibility contract.
 
+For a `Union`, every branch that is productive within the current generation budget has equal selection probability.
+Selection is by declared branch rather than by domain cardinality: overlapping branches are not reweighted or
+deduplicated. This preserves coverage of narrow alternatives such as a `Literal` beside an unbounded `String`.
+Shrinking crosses to another branch only when that branch has a strictly lower structural generation cost, such as a
+finite base branch of a recursive union. Equal-cost branches do not use declaration order as an artificial simplicity
+ordering.
+
+For an object with optional named properties, generation first selects the property count uniformly across the legal
+range and then selects a subset uniformly at that count. This gives empty, complete, and intermediate object shapes
+equal representation by size while retaining a 50% marginal presence probability for each property when unconstrained.
+
+During `check`, `size` is a maximum generation budget rather than a constant budget for every run. The runner grows
+linearly from zero to the configured maximum according to successful runs; discards do not advance the progression. A
+single-run check uses the configured size directly. `sample` continues to use the configured size for every value.
+Unconstrained `String`, `Array`, and indexed-object cardinality scale directly with the current size without separate
+fallback ceilings. One size unit permits one code unit, element, or property; explicit Schema minima and mandatory
+members are honored even when they exceed the current size, and explicit maxima clamp it.
+The compiler propagates private `mayRecurse` metadata from recursive SCC edges. When multiple siblings can recurse,
+their generation slots are shuffled per attempt while results retain their declared positions. This preserves one
+shared total budget and replay determinism without assigning depth systematically by Struct or tuple order.
+The specialized `Schema.Json` generator follows the same cardinality and length-bias policy for its strings, arrays,
+and objects while retaining the shared recursive budget; specialization is not a separate size model. JSON object
+member names use the same native `String` generation and bounded constructive uniqueness rather than a `keyN` catalog.
+If bounded key retries cannot complete the requested shape, the attempt is discarded.
+Native `String` generation occasionally injects the approved Effect-owned JavaScript edge corpus when its members fit
+the active length bounds. Ordinary printable-ASCII generation remains the default path, and constructive patterns keep
+their dedicated compiler.
+Generic and JSON string shrinking first reduces length and then, from left to right, halves each UTF-16 code unit toward
+the null unit. Pattern strings retain their separate structural shrinker, and all Schema filters continue to guard
+candidate delivery.
+Object shrinking removes optional properties first, then shrinks values, then shrinks generated keys. Key candidates
+are normalized to JavaScript property keys and retain constructive uniqueness; collisions are skipped while their
+potentially valid shrink descendants remain searchable. Fixed named Struct properties do not acquire key shrinking.
+
+Follow-up: design an explicit Schema-level way to request general Unicode or binary string generation before expanding
+the ordinary `Schema.String` distribution. The design must choose code units, code points, or graphemes deliberately;
+full UTF-16 coverage is not added silently to the default. Until then, printable ASCII plus the approved JavaScript
+edge corpus remains aligned with fast-check's mature default while still exercising targeted runtime boundaries.
+
+Within the legal range at the current size, `String` and `Array` lengths occasionally target the minimum or maximum
+boundary according to the same private run-dependent bias schedule as numeric generation. All intermediate lengths
+remain uniformly reachable. Constructive regular-expression generation applies the policy to its ordered set of valid
+lengths, so an impossible intermediate length is never selected.
+
+Shrinking follows the first candidate that still falsifies the property and continues recursively from that candidate.
+It therefore finds a local minimum according to each domain's ordered shrink candidates rather than attempting a
+global comparison between arbitrary values. `maxShrinks` bounds candidate evaluations across this traversal.
+Any falsification can continue the shrink, whether it returned `false` or produced a typed property error. The final
+`failure` always describes the final `counterexample`; the runner does not claim to identify or compare underlying bugs
+across arbitrary error values.
+Effectful properties must produce the same outcome for the same input and initial environment. The runner does not
+clone or restore mutable services between generation, shrinking, or replay evaluations; a stateful property owns an
+independent fixture and cleanup inside each evaluation.
+Property success is explicit: synchronous and Effectful properties must return `true`. Returning `void` is not
+supported; `false` and typed Effect failures remain the two falsification forms.
+For `Falsified`, `runs` counts main property evaluations through and including the falsifying evaluation; shrink
+evaluations are excluded. An immediate falsification and a replay therefore both report one run.
+
 `Arbitrary<A>` remains a pure description. Canonical codecs do not require Effect services, so no public `R` parameter
 is needed. `sample` and `check` return `Effect` for laziness, deterministic Random provisioning, interruption,
 effectful properties, typed property failures, and composition—not to provide codec services.
@@ -450,7 +508,8 @@ performance optimization only if benchmarks demonstrate a problem.
 2. record graph edges and compute strongly connected components;
 3. compute productivity as a least fixed point for each SCC;
 4. save the first rank-decreasing finite base plan for every productive member;
-5. fail `Arbitrary.schema` when an SCC has no productive member reachable from its entry;
+5. treat an SCC with no productive member as an empty branch and fail `Arbitrary.schema` only when the root has no
+   finite generation path;
 6. allocate one per-sample complexity budget shared by the entire SCC;
 7. decrement or partition that budget across every internal recursive edge;
 8. at zero budget, use only the saved rank-decreasing base plan.
@@ -689,8 +748,9 @@ filter exhausts.
 - compute SCC productivity and shared budgets;
 - add direct and mutual recursion tests.
 
-Gate: the representative recursive Schema derives without fast-check, generated samples satisfy its local checks, and
-unproductive recursion fails in `Arbitrary.schema`.
+Gate: the representative recursive Schema derives without fast-check, generated samples satisfy its local checks,
+unproductive recursive branches are treated as empty, and derivation fails only when the root has no finite generation
+path.
 
 #### Slice 3: Declaration codecs and annotations
 
@@ -944,7 +1004,7 @@ carrier can be efficient, not evidence of equal statistical distributions. The m
 - Int reaches both parities across the complete safe range and rejects bounds outside it;
 - optional tuple/struct positions and tuple rest are generated and shrunk correctly;
 - recursive and mutually recursive Schemas terminate with one shared SCC budget;
-- unproductive recursion fails before sampling;
+- unproductive recursive branches are treated as empty and fail before sampling only when the root has no finite path;
 - constraints do not leak to child nodes;
 - Option recursion discovers `None` through its codec as a base route;
 - each initial Declaration resolution branch has a focused test;
@@ -998,9 +1058,9 @@ In separate five-round cross-engine diagnostics, native bounded `Number` took `6
 the harness validates only comparable work and output invariants.
 
 No correctness concession produced the faster cases: ordered-domain validity, broad coverage, shrinking and replay
-remain intact. The unresolved architectural question is whether a unique collection should inherit the full item bias
-or attenuate it to reduce duplicates. The current implementation keeps the same leaf policy in every context; changing
-it requires an explicit decision because it would make a leaf's search distribution depend on its parent container.
+remain intact. A unique collection inherits the full item bias: placing an Arbitrary inside `Unique` does not silently
+change its distribution. This keeps leaf generation independent of its parent container, accepting that biased values
+can cause more duplicate retries.
 
 ## Stack safety and interruption hardening
 
@@ -1019,8 +1079,7 @@ and unique generation were also statistically inconclusive, with point estimates
 Constructive uniqueness now keeps primitive values in a native `Set` and reserves `Hash.hash` buckets plus
 `Effect.Equal` collision checks for objects and functions. This preserves the Schema equality contract, including
 structural object equality, without changing the numeric item distribution. The remaining unique cost is primarily
-duplicate regeneration caused by the approved item bias; changing that requires the separate architectural decision
-recorded above.
+duplicate regeneration caused by the approved item bias; distribution-aware attenuation is deliberately excluded.
 
 ## Migration beyond the vertical slice
 
@@ -1033,6 +1092,17 @@ recorded above.
 6. remove legacy `toArbitrary`, `Schema.toArbitrary`, `effect/testing/FastCheck`, and the fast-check dependency only after
    downstream adoption and parity gates pass;
 7. decide whether the unstable interface is ready for `effect/Arbitrary` stabilization.
+
+## Holistic follow-up after parity
+
+Do not implement the following items independently during the vertical slice. Once Schema and built-in parity is
+complete, evaluate them together against correctness, counterexample quality, runtime performance, and bundle size:
+
+- [ ] compare the current `Sample` tree with trace-informed shrinking and private structural spans;
+- [ ] evaluate private finite-domain metadata for constructive `unique` generation;
+- [ ] add structured discard reasons and runner health diagnostics;
+- [ ] evaluate automatic persistence and reuse of concrete counterexamples;
+- [ ] review boundary-oriented distributions across the complete constructor catalog.
 
 No `@effect/fast-check-v4` package or adapter is part of this plan.
 
@@ -1059,8 +1129,12 @@ annotation is added only if a real custom Declaration needs the same escape hatc
 
 ### Bundle size
 
-The private callback seam prevents core Schema from importing the kernel, but built-in callbacks still add some code to
-their owning declarations. Only the two materialized fixtures can establish the actual comparison.
+The private callback seam prevents core Schema from importing the kernel, but the compiler's central `Constructors`
+object currently retains every specialized built-in implementation whenever native Arbitrary is bundled. After adding
+URL and Date, the materialized Tree fixture measured 32.33 KB for native versus 78.92 KB for fast-check, and bundle
+analysis confirmed that the unused URL and Date implementations were present. The native bundle remains substantially
+smaller, but pay-for-use built-in tree-shaking is explicitly deferred until the catalog is complete. It is a final bundle
+gate before stabilization, not a reason to introduce a marker, registry, second AST, or larger private algebra now.
 
 ### Replay stability
 

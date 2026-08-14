@@ -4,22 +4,22 @@ import * as Pull from "../../Pull.ts"
 import * as Random from "../../Random.ts"
 import * as Scheduler from "../../Scheduler.ts"
 import type * as Schema from "../../Schema.ts"
-import type * as Model from "./model.ts"
+import type {
+  Arbitrary,
+  CheckOptions,
+  CheckResult,
+  PropertyError,
+  PropertyFailure,
+  Replay,
+  ReturnedFalse,
+  SampleError,
+  SampleOptions
+} from "../../unstable/arbitrary/Arbitrary.ts"
+import * as Model from "./model.ts"
 import * as Compiler from "./schema.ts"
 
 /** @internal */
-export const TypeId: unique symbol = Symbol.for("~effect/unstable/arbitrary/Arbitrary")
-
-const InternalTypeId: unique symbol = Symbol.for("~effect/unstable/arbitrary/Arbitrary/internal")
-
-/** @internal */
-export interface Arbitrary<out A> {
-  readonly [TypeId]: typeof TypeId
-  readonly [InternalTypeId]: Model.Compiled<A>
-}
-
-/** @internal */
-export type Replay = string
+export const TypeId = "~effect/unstable/arbitrary/Arbitrary"
 
 interface ReplayData {
   readonly seed: string | number
@@ -28,87 +28,13 @@ interface ReplayData {
   readonly path: ReadonlyArray<number>
 }
 
-/** @internal */
-export interface SampleOptions {
-  readonly count?: number | undefined
-  readonly size?: number | undefined
-  readonly maxDiscards?: number | undefined
-  readonly seed?: string | number | undefined
-}
-
-/** @internal */
-export interface CheckOptions {
-  readonly runs?: number | undefined
-  readonly size?: number | undefined
-  readonly maxDiscards?: number | undefined
-  readonly maxShrinks?: number | undefined
-  readonly seed?: string | number | undefined
-  readonly replay?: Replay | undefined
-}
-
-/** @internal */
-export interface SampleError {
-  readonly _tag: "SampleError"
-  readonly generated: number
-  readonly discards: number
-}
-
-/** @internal */
-export interface ReturnedFalse {
-  readonly _tag: "ReturnedFalse"
-}
-
-/** @internal */
-export interface PropertyError<out E> {
-  readonly _tag: "PropertyError"
-  readonly error: E
-}
-
-/** @internal */
-export type PropertyFailure<E> = ReturnedFalse | PropertyError<E>
-
-/** @internal */
-export interface Passed {
-  readonly _tag: "Passed"
-  readonly runs: number
-  readonly discards: number
-}
-
-/** @internal */
-export interface Falsified<out A, out E> {
-  readonly _tag: "Falsified"
-  readonly initialInput: A
-  readonly counterexample: A
-  readonly failure: PropertyFailure<E>
-  readonly runs: number
-  readonly discards: number
-  readonly shrinks: number
-  readonly replay: Replay
-}
-
-/** @internal */
-export interface Exhausted {
-  readonly _tag: "Exhausted"
-  readonly runs: number
-  readonly discards: number
-}
-
-/** @internal */
-export interface ReplayMismatch {
-  readonly _tag: "ReplayMismatch"
-  readonly reason: "AttemptDiscarded" | "PropertyPassed" | "ShrinkPathUnavailable" | "ShrinkPassed"
-}
-
-/** @internal */
-export type CheckResult<A, E> = Passed | Falsified<A, E> | Exhausted | ReplayMismatch
-
 const ArbitraryProto = {
   [TypeId]: TypeId
 }
 
 function make<A>(compiled: Model.Compiled<A>): Arbitrary<A> {
   return Object.create(ArbitraryProto, {
-    [InternalTypeId]: { value: compiled }
+    gen: { value: compiled }
   })
 }
 
@@ -123,23 +49,12 @@ function makeReplay(data: ReplayData): Replay {
 }
 
 function replayData(replay: Replay): ReplayData {
-  const encoded: unknown = JSON.parse(replay)
-  if (
-    !Array.isArray(encoded) || encoded.length !== 5 ||
-    encoded[0] !== 0 && encoded[0] !== 1 ||
-    typeof encoded[1] !== "string" ||
-    !Array.isArray(encoded[4])
-  ) {
-    throw new Error("Invalid Arbitrary replay value")
-  }
-  const attempt = natural(encoded[2], 0, "replay attempt")
-  const size = natural(encoded[3], 0, "replay size")
-  const path = encoded[4].map((index) => natural(index, 0, "replay path index"))
+  const encoded = JSON.parse(replay) as [0 | 1, string, number, number, ReadonlyArray<number>]
   return {
     seed: encoded[0] === 0 ? globalThis.Number(encoded[1]) : encoded[1],
-    attempt,
-    size,
-    path
+    attempt: encoded[2],
+    size: encoded[3],
+    path: encoded[4]
   }
 }
 
@@ -233,7 +148,7 @@ const generateAttempt = <A>(
   size: number,
   shrinks: boolean
 ): Effect.Effect<Model.Attempt<A>> =>
-  compiled.generate({
+  Model.toEffectGeneration(compiled.generate({
     size,
     shrinks,
     // This is fast-check v4.9.0's run-dependent numeric bias schedule (MIT). It makes short checks edge-heavy while
@@ -241,8 +156,8 @@ const generateAttempt = <A>(
     // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/property/IRawProperty.ts#L92-L95
     biasFactor: 2 + Math.floor(Math.log10(attempt + 1)),
     random: makeAttemptRandom(seed, attempt),
-    budget: { remaining: size }
-  })
+    budget: { remaining: compiled.minCost + size }
+  }))
 
 const resolveMasterSeed = (seed: string | number | undefined): Effect.Effect<string | number> =>
   seed === undefined ? Random.nextInt : Effect.succeed(seed)
@@ -253,31 +168,29 @@ export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Typ
 }
 
 /** @internal */
-export function sample<A>(self: Arbitrary<A>, options?: SampleOptions): Effect.Effect<ReadonlyArray<A>, SampleError> {
-  return Effect.gen(function*() {
-    const count = natural(options?.count, 10, "count")
-    const size = natural(options?.size, 10, "size")
-    const maxDiscards = natural(options?.maxDiscards, Math.max(100, count * 10), "maxDiscards")
-    const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
-    const seed = yield* resolveMasterSeed(options?.seed)
-    const seedState = hashSeed(seed)
-    const values: Array<A> = []
-    let discards = 0
-    let attemptIndex = 0
-    while (values.length < count) {
-      const attempt = yield* generateAttempt(self[InternalTypeId], seedState, attemptIndex++, size, false)
-      if (attempt._tag === "Generated") {
-        values.push(attempt.sample.value)
-      } else if (++discards > maxDiscards) {
-        const error: SampleError = { _tag: "SampleError", generated: values.length, discards }
-        return yield* Effect.fail(error)
-      } else if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) {
-        yield* Effect.yieldNow
-      }
+export const sample = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, options?: SampleOptions) {
+  const count = natural(options?.count, 10, "count")
+  const size = natural(options?.size, 10, "size")
+  const maxDiscards = natural(options?.maxDiscards, Math.max(100, count * 10), "maxDiscards")
+  const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
+  const seed = yield* resolveMasterSeed(options?.seed)
+  const seedState = hashSeed(seed)
+  const values: Array<A> = []
+  let discards = 0
+  let attemptIndex = 0
+  while (values.length < count) {
+    const attempt = yield* generateAttempt(self.gen, seedState, attemptIndex++, size, false)
+    if (attempt._tag === "Generated") {
+      values.push(attempt.sample.value)
+    } else if (++discards > maxDiscards) {
+      const error: SampleError = { _tag: "SampleError", generated: values.length, discards }
+      return yield* Effect.fail(error)
+    } else if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) {
+      yield* Effect.yieldNow
     }
-    return values
-  })
-}
+  }
+  return values
+})
 
 const passedProperty = { _tag: "Passed" } as const
 const returnedFalse: ReturnedFalse = { _tag: "ReturnedFalse" }
@@ -365,68 +278,67 @@ const followReplay = Effect.fnUntraced(function*<A, E, R>(
 })
 
 /** @internal */
-export function check<A, E, R>(
+export const check = Effect.fnUntraced(function*<A, E, R>(
   self: Arbitrary<A>,
   property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
   options?: CheckOptions
-): Effect.Effect<CheckResult<A, E>, never, R> {
-  return Effect.gen(function*() {
-    const replay = options?.replay
-    if (replay !== undefined) {
-      const data = replayData(replay)
-      const attempt = yield* generateAttempt(self[InternalTypeId], hashSeed(data.seed), data.attempt, data.size, true)
-      if (attempt._tag === "Discarded") return { _tag: "ReplayMismatch", reason: "AttemptDiscarded" }
-      const outcome = yield* evaluateProperty(property, attempt.sample.value)
-      if (outcome._tag === "Passed") return { _tag: "ReplayMismatch", reason: "PropertyPassed" }
-      const replayed = yield* followReplay(attempt.sample, outcome, data.path, property)
-      if (replayed._tag === "ReplayMismatch") return replayed
-      return {
-        _tag: "Falsified",
-        initialInput: attempt.sample.value,
-        counterexample: replayed.current.value,
-        failure: replayed.failure,
-        runs: 0,
-        discards: 0,
-        shrinks: data.path.length,
-        replay
-      }
+): Effect.fn.Return<CheckResult<A, E>, never, R> {
+  const replay = options?.replay
+  if (replay !== undefined) {
+    const data = replayData(replay)
+    const attempt = yield* generateAttempt(self.gen, hashSeed(data.seed), data.attempt, data.size, true)
+    if (attempt._tag === "Discarded") return { _tag: "ReplayMismatch", reason: "AttemptDiscarded" }
+    const outcome = yield* evaluateProperty(property, attempt.sample.value)
+    if (outcome._tag === "Passed") return { _tag: "ReplayMismatch", reason: "PropertyPassed" }
+    const replayed = yield* followReplay(attempt.sample, outcome, data.path, property)
+    if (replayed._tag === "ReplayMismatch") return replayed
+    return {
+      _tag: "Falsified",
+      initialInput: attempt.sample.value,
+      counterexample: replayed.current.value,
+      failure: replayed.failure,
+      runs: 1,
+      discards: 0,
+      shrinks: data.path.length,
+      replay
     }
+  }
 
-    const runsTarget = positive(options?.runs, 100, "runs")
-    const size = natural(options?.size, 10, "size")
-    const maxDiscards = natural(options?.maxDiscards, Math.max(100, runsTarget * 10), "maxDiscards")
-    const maxShrinks = natural(options?.maxShrinks, 100, "maxShrinks")
-    const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
-    const seed = yield* resolveMasterSeed(options?.seed)
-    const seedState = hashSeed(seed)
-    let runs = 0
-    let discards = 0
-    let attemptIndex = 0
-    while (runs < runsTarget) {
-      const currentAttempt = attemptIndex++
-      const attempt = yield* generateAttempt(self[InternalTypeId], seedState, currentAttempt, size, true)
-      if (attempt._tag === "Discarded") {
-        if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards }
-        if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
-        continue
-      }
-      const outcome = yield* evaluateProperty(property, attempt.sample.value)
-      if (outcome._tag === "Passed") {
-        runs++
-        continue
-      }
-      const minimized = yield* shrink(attempt.sample, outcome, property, maxShrinks)
-      return {
-        _tag: "Falsified",
-        initialInput: attempt.sample.value,
-        counterexample: minimized.current.value,
-        failure: minimized.failure,
-        runs,
-        discards,
-        shrinks: minimized.shrinks,
-        replay: makeReplay({ seed, attempt: currentAttempt, size, path: minimized.path })
-      }
+  const runsTarget = positive(options?.runs, 100, "runs")
+  const size = natural(options?.size, 10, "size")
+  const maxDiscards = natural(options?.maxDiscards, Math.max(100, runsTarget * 10), "maxDiscards")
+  const maxShrinks = natural(options?.maxShrinks, 100, "maxShrinks")
+  const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
+  const seed = yield* resolveMasterSeed(options?.seed)
+  const seedState = hashSeed(seed)
+  let runs = 0
+  let discards = 0
+  let attemptIndex = 0
+  while (runs < runsTarget) {
+    const currentAttempt = attemptIndex++
+    const currentSize = runsTarget === 1 ? size : Math.round(runs * size / (runsTarget - 1))
+    const attempt = yield* generateAttempt(self.gen, seedState, currentAttempt, currentSize, true)
+    if (attempt._tag === "Discarded") {
+      if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards }
+      if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
+      continue
     }
-    return { _tag: "Passed", runs, discards }
-  })
-}
+    const outcome = yield* evaluateProperty(property, attempt.sample.value)
+    if (outcome._tag === "Passed") {
+      runs++
+      continue
+    }
+    const minimized = yield* shrink(attempt.sample, outcome, property, maxShrinks)
+    return {
+      _tag: "Falsified",
+      initialInput: attempt.sample.value,
+      counterexample: minimized.current.value,
+      failure: minimized.failure,
+      runs: runs + 1,
+      discards,
+      shrinks: minimized.shrinks,
+      replay: makeReplay({ seed, attempt: currentAttempt, size: currentSize, path: minimized.path })
+    }
+  }
+  return { _tag: "Passed", runs, discards }
+})
