@@ -36,6 +36,12 @@ describe("Arbitrary", () => {
           expect(input.constraint).type.toBe<
             Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Box> | undefined
           >()
+          expect(input.schemas).type.toBe<Schema.Annotations.ToCodecArbitrary.Schemas>()
+          expect(input.schemas.Date).type.toBe<
+            (
+              constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Date> | undefined
+            ) => Schema.Codec<number>
+          >()
           return hole<SchemaAST.Link>()
         }
       }

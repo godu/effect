@@ -13,6 +13,7 @@ import * as Regexp from "./regexp.ts"
 
 type Constraint = Schema.Annotations.ToCodecArbitrary.Constraint<any>
 type GenerationConstraint = Schema.Annotations.ToCodecArbitrary.GenerationConstraint<any>
+type Schemas = Schema.Annotations.ToCodecArbitrary.Schemas
 
 interface Checks {
   readonly constraint: Constraint | undefined
@@ -179,6 +180,85 @@ function withoutOrder(constraint: Constraint | undefined): GenerationConstraint 
   if (constraint === undefined) return undefined
   const { order: _, ...out } = constraint
   return Object.keys(out).length === 0 ? undefined : out
+}
+
+const minimumDateTimestamp = -8_640_000_000_000_000
+const maximumDateTimestamp = 8_640_000_000_000_000
+
+const schemas: Schemas = {
+  Json: () => {
+    let schema: Schema.Codec<Schema.Json>
+    schema = Schema.Union([
+      Schema.Null,
+      Schema.Finite,
+      Schema.Boolean,
+      Schema.String,
+      Schema.Array(Schema.suspend(() => schema)),
+      Schema.Record(Schema.String, Schema.suspend(() => schema))
+    ]) as Schema.Codec<Schema.Json>
+    return schema
+  },
+  RegExp: () =>
+    Schema.Struct({
+      source: Schema.Literals([
+        "",
+        ".",
+        ".*",
+        "\\d+",
+        "\\w+",
+        "[a-z]+",
+        "[A-Z]+",
+        "[0-9]+",
+        "^[a-zA-Z0-9]+$",
+        "^\\d{4}-\\d{2}-\\d{2}$"
+      ]),
+      flags: Schema.Struct({
+        g: Schema.Boolean,
+        i: Schema.Boolean,
+        m: Schema.Boolean,
+        s: Schema.Boolean,
+        u: Schema.Boolean,
+        y: Schema.Boolean
+      })
+    }),
+  URL: () =>
+    Schema.Struct({
+      protocol: Schema.Literals(["http", "https"]),
+      label: Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/), Schema.isMinLength(1), Schema.isMaxLength(63)),
+      suffix: Schema.String.check(Schema.isPattern(/^[a-z]+$/), Schema.isMinLength(2), Schema.isMaxLength(10)),
+      path: Schema.Array(
+        Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~%-]*$/), Schema.isMaxLength(16))
+      ).check(Schema.isMaxLength(4))
+    }),
+  Date: (constraint) => {
+    const minimum = Math.max(
+      minimumDateTimestamp,
+      constraint?.minimum === undefined
+        ? minimumDateTimestamp
+        : constraint.minimum.getTime() + (constraint.exclusiveMinimum === true ? 1 : 0)
+    )
+    const maximum = Math.min(
+      maximumDateTimestamp,
+      constraint?.maximum === undefined
+        ? maximumDateTimestamp
+        : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
+    )
+    return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+  },
+  Uint8Array: (constraint) => {
+    let schema: Schema.Codec<ReadonlyArray<number>> = Schema.Array(
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))
+    )
+    if (constraint?.minLength !== undefined && constraint.maxLength !== undefined) {
+      schema = schema.check(Schema.isLengthBetween(constraint.minLength, constraint.maxLength))
+    } else if (constraint?.minLength !== undefined) {
+      schema = schema.check(Schema.isMinLength(constraint.minLength))
+    } else if (constraint?.maxLength !== undefined) {
+      schema = schema.check(Schema.isMaxLength(constraint.maxLength))
+    }
+    if (constraint?.unique === true) schema = schema.check(Schema.isUnique())
+    return schema
+  }
 }
 
 function lengthBounds(
@@ -1254,7 +1334,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     if (typeof getArbitrary === "function") {
       link = getArbitrary({
         typeParameters: parameters,
-        constraint: withoutOrder(constraint)
+        constraint: withoutOrder(constraint),
+        schemas
       })
     } else {
       const getJson = ast.annotations?.toCodecJson

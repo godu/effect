@@ -198,12 +198,12 @@ The native compiler uses this resolution order:
 The current fast-check `toArbitrary` key is not consulted by the native compiler. This keeps the two implementations
 independent and makes missing native coverage visible.
 
-`toCodecArbitrary` is an experimental Declaration annotation. It receives decoded type-parameter schemas plus the
-normalized constraints for the declared target and returns a Link:
+`toCodecArbitrary` is an experimental Declaration annotation. It receives decoded type-parameter schemas, normalized
+constraints for the declared target, and a closed palette of built-in Schema factories, then returns a Link:
 
 ```ts
 toCodecArbitrary: ;
-;(({ typeParameters, constraint }) => SchemaAST.Link)
+;(({ typeParameters, constraint, schemas }) => SchemaAST.Link)
 ```
 
 The callback receives this flat normalized shape; absent fields are omitted and `constraint` itself is `undefined` when
@@ -230,15 +230,16 @@ interface GenerationConstraint<T = unknown> {
 Raw filter contributions may additionally carry `order`. The compiler uses it to merge bounds and removes it before
 calling the Declaration. `number: "integer"` subsumes finiteness.
 
-The Link selects an alternate Schema representation intended to be more productive or efficient for generation. The
-callback translates target-domain constraints into checks on that source Schema; the compiler does not forward them
-unchanged. Original target checks remain residual after decoding. Decode failures are bounded discards, so the
-alternate codec may be partial without making sampling hang.
+The Link selects an alternate Schema representation intended to be more productive or efficient for generation. For
+built-ins, the callback passes target-domain constraints to a semantic factory such as `schemas.Date(constraint)`; that
+factory translates the fields it recognizes into checks on its source Schema. Original target checks remain residual
+after decoding. Decode failures are bounded discards, so the alternate codec may be partial without making sampling
+hang.
 
 This seam passes the deletion test through production uses for recursive JSON, RegExp, URL, Date, Uint8Array, and
-collection cardinality. It removes the private `~toArbitrary` HKT, the constructor algebra, and the central catalog of
-specialized generators. User-defined Declarations can use the same Schema-only interface without importing the native
-Arbitrary module.
+collection cardinality. It removes the private `~toArbitrary` HKT and the arbitrary-constructor algebra. The closed
+palette is not a registry: it contains only Effect-owned semantic Schema factories and cannot be extended or looked up
+by key. User-defined Declarations can use the same Schema-only interface without importing the native Arbitrary module.
 
 `toCodecJson: () => undefined` means that a declaration is already canonical JSON; it does not reveal a structural
 shape. It is an explicit self-canonical result rather than an instruction to try `toCodec`. If `toCodecArbitrary` has
@@ -476,9 +477,9 @@ Child nodes start with a reset node-local constraint context. Container constrai
 fields.
 
 For a Declaration, `toCodecArbitrary` receives the normalized target constraint without its compiler-only `Order`.
-The callback translates the fields it recognizes into checks on its source Schema. Canonical `toCodecJson` and
-`toCodec` targets start with a reset constraint context because their domains may not match the declared target.
-Original target checks still run after decoding.
+Built-in palette factories accept that constraint in the declared target domain and translate the fields they recognize
+into checks on their source Schema. Canonical `toCodecJson` and `toCodec` targets start with a reset constraint context
+because their domains may not match the declared target. Original target checks still run after decoding.
 
 ### Codec links and shrinking
 
@@ -817,13 +818,15 @@ Measured on the implemented slice with the two materialized fixtures:
 | Fixture                    | Minified + gzip |
 | -------------------------- | --------------: |
 | fast-check v4 materialized |        78.95 KB |
-| native `Arbitrary.schema`  |        32.17 KB |
-| native minus fast-check    |       -46.78 KB |
+| native `Arbitrary.schema`  |        32.74 KB |
+| native minus fast-check    |       -46.21 KB |
 
-The native fixture is approximately 59.3% smaller. Replacing the private constructor catalog with Schema Links reduced
-the native fixture by 0.29 KB compared with the preceding implementation; the materialized fast-check fixture remained
-effectively unchanged. Because the resulting fixture remains substantially smaller, no composition analysis was needed
-for this gate.
+The native fixture is approximately 58.5% smaller. Moving generation-only source Schemas from built-in declarations to
+the native compiler's factory palette increased the native fixture by 0.58 KB, while reducing the ordinary `config`
+fixture by 1.13 KB compared with the preceding implementation. Relative to the branch merge-base, `config` is now only
+0.19 KB larger instead of 1.32 KB. All other fixtures were unchanged by the move except for reductions of at most 0.03
+KB. The remaining ordinary overhead does not justify moving transformations into the palette without further bundle
+evidence.
 
 ### Runtime performance baseline
 
@@ -992,6 +995,11 @@ fast-check v4, the same run measured native faster in nine of eleven scenarios, 
 `tmp/runtimeperf/results/2026-08-14T13-01-16-362Z-88309-a2a563-compare-arbitrary.json`, and the cross-engine run in
 `tmp/runtimeperf/results/2026-08-14T13-02-45-065Z-88648-78564e-single-arbitrary.json`.
 
+Moving the built-in source Schemas into the factory palette was compared directly against the preceding implementation.
+All eleven cases were statistically inconclusive, with median deltas ranging from a 6.12% improvement to a 1.41%
+slowdown. There is no measured runtime regression attributable to the move. The comparison is recorded in
+`tmp/runtimeperf/results/2026-08-14T15-50-18-456Z-20517-eada80-compare-arbitrary.json`.
+
 ## Test plan
 
 ### Kernel and runner
@@ -1022,8 +1030,8 @@ fast-check v4, the same run measured native faster in nine of eleven scenarios, 
 - constraints do not leak to child nodes;
 - Option recursion discovers `None` through its codec as a base route;
 - each initial Declaration resolution branch has a focused test;
-- a custom user Declaration can provide a typed `toCodecArbitrary` Link with decoded type parameters and normalized
-  target constraints;
+- a custom user Declaration can provide a typed `toCodecArbitrary` Link with decoded type parameters, normalized target
+  constraints, and the built-in Schema factory palette;
 - legacy and native annotations can coexist on the same declaration.
 
 ### Differential and parity work
@@ -1135,7 +1143,8 @@ until these domains pass parity tests.
 
 Cardinality usually maps naturally from a collection Declaration to an Array codec target, while ordered domain
 constraints such as Date or BigDecimal do not. The compiler uses tagged `Order` identity while merging raw filters,
-then the selected `toCodecArbitrary` callback translates normalized bounds into its source domain.
+then a built-in palette factory translates normalized target-domain bounds into its source domain. Custom declarations
+perform the same translation in their own callback or source Schema factory.
 
 ### Codec shrink quality
 
@@ -1146,8 +1155,11 @@ exposing a builder, shrink tree, or native Arbitrary implementation.
 ### Bundle size
 
 Schema-owned generation Links prevent core Schema from importing the native kernel and remove the compiler's central
-`Constructors` object. Each built-in keeps its representation next to its Declaration, allowing ordinary module
-tree-shaking to remove unrelated recipes. Bundle comparison remains a final gate after every parity batch.
+`Constructors` object. Generation-only source Schemas live behind the native compiler's closed factory palette so
+ordinary imports do not retain them. Built-in declarations keep only the small callback and transformation needed to
+form the Link. Bundle comparison remains a final gate after every parity batch; if transformation closures still cause
+a material ordinary-bundle regression, moving complete Links behind the palette is a measured follow-up rather than a
+pre-emptive expansion of its responsibility.
 
 ### Replay stability
 

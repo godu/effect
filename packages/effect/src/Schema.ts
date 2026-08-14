@@ -12121,31 +12121,7 @@ export interface RegExp extends instanceOf<globalThis.RegExp> {
   readonly "Rebuild": RegExp
 }
 
-const RegExpArbitrarySources = [
-  "",
-  ".",
-  ".*",
-  "\\d+",
-  "\\w+",
-  "[a-z]+",
-  "[A-Z]+",
-  "[0-9]+",
-  "^[a-zA-Z0-9]+$",
-  "^\\d{4}-\\d{2}-\\d{2}$"
-] as const
 const RegExpArbitraryFlags = ["g", "i", "m", "s", "u", "y"] as const
-
-const RegExpArbitraryRepresentation = Struct({
-  source: Literals(RegExpArbitrarySources),
-  flags: Struct({
-    g: Boolean,
-    i: Boolean,
-    m: Boolean,
-    s: Boolean,
-    u: Boolean,
-    y: Boolean
-  })
-})
 
 /**
  * Schema for JavaScript `RegExp` objects.
@@ -12215,14 +12191,14 @@ export const RegExp: RegExp = instanceOf(
             .map((flags) => flags.join(""))
         )
         .map(([source, flags]) => new globalThis.RegExp(source, flags)),
-    toCodecArbitrary: () =>
+    toCodecArbitrary: ({ constraint, schemas }) =>
       link<globalThis.RegExp>()(
-        RegExpArbitraryRepresentation,
+        schemas.RegExp(constraint),
         SchemaTransformation.transform({
           decode: ({ flags, source }) =>
             new globalThis.RegExp(source, RegExpArbitraryFlags.filter((flag) => flags[flag]).join("")),
           encode: (regExp) => ({
-            source: regExp.source as typeof RegExpArbitrarySources[number],
+            source: regExp.source,
             flags: {
               g: regExp.global,
               i: regExp.ignoreCase,
@@ -12267,13 +12243,6 @@ export interface URL extends instanceOf<globalThis.URL> {
 
 const URLString = String.annotate({ expected: "a string that will be decoded as a URL" })
 
-const URLArbitraryRepresentation = Struct({
-  protocol: Literals(["http", "https"]),
-  label: String.check(isPattern(/^[a-z0-9]+$/), isMinLength(1), isMaxLength(63)),
-  suffix: String.check(isPattern(/^[a-z]+$/), isMinLength(2), isMaxLength(10)),
-  path: ArraySchema(String.check(isPattern(/^[A-Za-z0-9._~%-]*$/), isMaxLength(16))).check(isMaxLength(4))
-})
-
 /**
  * Schema for JavaScript `URL` objects.
  *
@@ -12304,9 +12273,9 @@ export const URL: URL = instanceOf(
         SchemaTransformation.urlFromString
       ),
     toArbitrary: () => (fc) => fc.webUrl().map((s) => new globalThis.URL(s)),
-    toCodecArbitrary: () =>
+    toCodecArbitrary: ({ constraint, schemas }) =>
       link<globalThis.URL>()(
-        URLArbitraryRepresentation,
+        schemas.URL(constraint),
         SchemaTransformation.transform({
           decode: ({ label, path, protocol, suffix }) =>
             new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`),
@@ -12402,9 +12371,6 @@ function dateArbitraryConstraints<T = globalThis.Date>(
 }
 
 const DateString = String.annotate({ expected: "a string that will be decoded as a Date" })
-const minimumDateTimestamp = -8_640_000_000_000_000
-const maximumDateTimestamp = 8_640_000_000_000_000
-
 /**
  * Schema for valid JavaScript `Date` objects.
  *
@@ -12455,24 +12421,11 @@ export const Date: Date = declare(
         ctx?.constraint?.ordered?.order === Order.Date ? ctx.constraint.ordered : undefined,
         { noInvalidDate: true }
       )),
-    toCodecArbitrary: ({ constraint }) => {
-      const minimum = Math.max(
-        minimumDateTimestamp,
-        constraint?.minimum === undefined
-          ? minimumDateTimestamp
-          : constraint.minimum.getTime() + (constraint.exclusiveMinimum === true ? 1 : 0)
-      )
-      const maximum = Math.min(
-        maximumDateTimestamp,
-        constraint?.maximum === undefined
-          ? maximumDateTimestamp
-          : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
-      )
-      return link<globalThis.Date>()(
-        Int.check(isBetween({ minimum, maximum })),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<globalThis.Date>()(
+        schemas.Date(constraint),
         SchemaTransformation.dateFromMillis
       )
-    }
   }
 )
 
@@ -13820,8 +13773,6 @@ export interface Uint8Array extends instanceOf<globalThis.Uint8Array<ArrayBuffer
   readonly "Rebuild": Uint8Array
 }
 
-const Uint8 = Int.check(isBetween({ minimum: 0, maximum: 255 }))
-
 const Base64String = String.annotate({
   expected: "a base64 encoded string that will be decoded as Uint8Array",
   format: "byte",
@@ -13856,9 +13807,9 @@ export const Uint8Array: Uint8Array = instanceOf(globalThis.Uint8Array<ArrayBuff
       SchemaTransformation.uint8ArrayFromBase64String
     ),
   toArbitrary: () => (fc) => fc.uint8Array(),
-  toCodecArbitrary: ({ constraint }) =>
+  toCodecArbitrary: ({ constraint, schemas }) =>
     link<globalThis.Uint8Array<ArrayBufferLike>>()(
-      withArrayArbitraryConstraints(ArraySchema(Uint8), constraint),
+      schemas.Uint8Array(constraint),
       SchemaTransformation.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>({
         decode: (values) => globalThis.Uint8Array.from(values),
         encode: (value) => globalThis.Array.from(value)
@@ -16517,16 +16468,6 @@ export interface JsonObject {
   readonly [x: string]: Json
 }
 
-let JsonArbitraryRepresentation: Codec<Json>
-JsonArbitraryRepresentation = Union([
-  Null,
-  Finite,
-  Boolean,
-  String,
-  ArraySchema(suspend(() => JsonArbitraryRepresentation)),
-  Record(String, suspend(() => JsonArbitraryRepresentation))
-]) as Codec<Json>
-
 /**
  * Schema that accepts and validates any immutable JSON-compatible value.
  *
@@ -16546,9 +16487,11 @@ export const Json: Codec<Json> = make(SchemaAST.annotate(SchemaAST.Json, {
     runtime: "Schema.Json",
     Type: "Schema.Json"
   }),
-  toCodecArbitrary: () =>
+  toCodecArbitrary: (
+    { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<Json, readonly []>
+  ) =>
     link<Json>()(
-      JsonArbitraryRepresentation,
+      schemas.Json(constraint),
       SchemaTransformation.passthrough()
     )
 }))
@@ -16616,9 +16559,11 @@ export const MutableJson: Codec<MutableJson> = make(SchemaAST.annotate(SchemaAST
     runtime: "Schema.MutableJson",
     Type: "Schema.MutableJson"
   }),
-  toCodecArbitrary: () =>
+  toCodecArbitrary: (
+    { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<MutableJson, readonly []>
+  ) =>
     link<MutableJson>()(
-      JsonArbitraryRepresentation,
+      schemas.Json(constraint),
       SchemaTransformation.passthrough<MutableJson, Json>({ strict: false })
     )
 }))
@@ -16901,9 +16846,10 @@ export declare namespace Annotations {
      *
      * **Details**
      *
-     * The callback receives decoded type-parameter schemas and normalized constraints for the declaration. The returned
-     * Link is preferred over canonical codec annotations by the native arbitrary compiler. Generated representation
-     * values are decoded and checked against the declaration, so the Link may be partial.
+     * The callback receives decoded type-parameter schemas, normalized constraints for the declaration, and Schema
+     * factories for constructive built-in representations. The returned Link is preferred over canonical codec
+     * annotations by the native arbitrary compiler. Generated representation values are decoded and checked against the
+     * declaration, so the Link may be partial.
      *
      * This annotation is experimental and may change while native arbitrary generation remains unstable.
      *
@@ -17041,6 +16987,46 @@ export declare namespace Annotations {
     }
 
     /**
+     * Provides Schema factories for constructive representations of built-in declaration types.
+     *
+     * **Details**
+     *
+     * Each factory receives normalized constraints in the declaration's decoded domain and returns the Schema used as
+     * the source of its arbitrary-generation Link.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Schemas {
+      readonly Json: (constraint: GenerationConstraint<Json> | undefined) => Codec<Json>
+      readonly RegExp: (
+        constraint: GenerationConstraint<globalThis.RegExp> | undefined
+      ) => Codec<{
+        readonly source: string
+        readonly flags: {
+          readonly g: boolean
+          readonly i: boolean
+          readonly m: boolean
+          readonly s: boolean
+          readonly u: boolean
+          readonly y: boolean
+        }
+      }>
+      readonly URL: (
+        constraint: GenerationConstraint<globalThis.URL> | undefined
+      ) => Codec<{
+        readonly protocol: "http" | "https"
+        readonly label: string
+        readonly suffix: string
+        readonly path: ReadonlyArray<string>
+      }>
+      readonly Date: (constraint: GenerationConstraint<globalThis.Date> | undefined) => Codec<number>
+      readonly Uint8Array: (
+        constraint: GenerationConstraint<globalThis.Uint8Array<ArrayBufferLike>> | undefined
+      ) => Codec<ReadonlyArray<number>>
+    }
+
+    /**
      * Raw constraint contribution attached to a Schema filter.
      *
      * **Details**
@@ -17077,6 +17063,7 @@ export declare namespace Annotations {
     > {
       readonly typeParameters: TypeParameters.Type<Parameters>
       readonly constraint: GenerationConstraint<T> | undefined
+      readonly schemas: Schemas
     }
 
     /**
