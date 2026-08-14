@@ -1,3 +1,5 @@
+import * as BigDecimal from "effect/BigDecimal"
+import * as DateTime from "effect/DateTime"
 import type * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import assert from "node:assert/strict"
@@ -31,6 +33,28 @@ export const makeUniqueArraySchema = () =>
     Schema.isMaxLength(32)
   )
 
+export const makeBigDecimalSchema = () =>
+  Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+    minimum: BigDecimal.make(BigInt(1234), 3),
+    maximum: BigDecimal.make(BigInt(1236), 3),
+    exclusiveMinimum: true,
+    exclusiveMaximum: true
+  }))
+
+const isBetweenDateTime = Schema.makeIsBetween({ order: DateTime.Order })
+
+export const makeDateTimeUtcSchema = () =>
+  Schema.DateTimeUtc.check(isBetweenDateTime({
+    minimum: DateTime.makeUnsafe(-1_000_000_000),
+    maximum: DateTime.makeUnsafe(1_000_000_000)
+  }))
+
+export const makeDateTimeZonedSchema = () =>
+  Schema.DateTimeZoned.check(isBetweenDateTime({
+    minimum: DateTime.makeZonedUnsafe(-1_000_000_000, { timeZone: "UTC" }),
+    maximum: DateTime.makeZonedUnsafe(1_000_000_000, { timeZone: "UTC" })
+  }))
+
 const validateTree = Schema.is(makeTreeSchema())
 
 const countTreeNodes = (tree: Tree): number =>
@@ -62,4 +86,13 @@ export const validateUint8Arrays = (count: number) => (values: unknown) => {
   assert.equal(values.every((value) => value instanceof Uint8Array && value.length <= 10), true)
   const bytes = values.reduce((total, value) => total + value.length, 0)
   assert.ok(bytes >= 500 && bytes <= 700)
+}
+
+export const validateSchemaValues = (schema: Schema.Top, count: number) => {
+  const is = Schema.is(schema)
+  return (values: unknown) => {
+    assert.ok(Array.isArray(values))
+    assert.equal(values.length, count)
+    assert.equal(values.every(is), true)
+  }
 }

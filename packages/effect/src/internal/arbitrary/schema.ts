@@ -1,3 +1,4 @@
+import * as BigDecimal from "../../BigDecimal.ts"
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
@@ -184,6 +185,108 @@ function withoutOrder(constraint: Constraint | undefined): GenerationConstraint 
 
 const minimumDateTimestamp = -8_640_000_000_000_000
 const maximumDateTimestamp = 8_640_000_000_000_000
+const minimumZonedDateTimeTimestamp = minimumDateTimestamp + 14 * 60 * 60 * 1000
+const maximumZonedDateTimeTimestamp = maximumDateTimestamp - 14 * 60 * 60 * 1000
+const bigDecimalDefaultMaxScale = 20
+const minimumTimeZoneOffset = -12 * 60 * 60 * 1000
+const maximumTimeZoneOffset = 14 * 60 * 60 * 1000
+const namedTimeZones = ["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"] as const
+
+function integerSchema(minimum: number, maximum: number): Schema.Codec<number> {
+  return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+}
+
+function bigIntSchema(minimum: bigint | undefined, maximum: bigint | undefined): Schema.Codec<bigint> {
+  if (minimum !== undefined && maximum !== undefined) {
+    return Schema.BigInt.check(Schema.isBetweenBigInt({ minimum, maximum }))
+  }
+  if (minimum !== undefined) return Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(minimum))
+  if (maximum !== undefined) return Schema.BigInt.check(Schema.isLessThanOrEqualToBigInt(maximum))
+  return Schema.BigInt
+}
+
+function bigDecimalValueAtScale(value: BigDecimal.BigDecimal, scale: number): bigint {
+  return BigDecimal.scale(value, scale).value
+}
+
+function bigDecimalMinimumAtScale(
+  minimum: BigDecimal.BigDecimal,
+  scale: number,
+  exclusive: boolean
+): bigint {
+  return exclusive
+    ? bigDecimalValueAtScale(BigDecimal.floor(minimum, scale), scale) + globalThis.BigInt(1)
+    : bigDecimalValueAtScale(BigDecimal.ceil(minimum, scale), scale)
+}
+
+function bigDecimalMaximumAtScale(
+  maximum: BigDecimal.BigDecimal,
+  scale: number,
+  exclusive: boolean
+): bigint {
+  return exclusive
+    ? bigDecimalValueAtScale(BigDecimal.ceil(maximum, scale), scale) - globalThis.BigInt(1)
+    : bigDecimalValueAtScale(BigDecimal.floor(maximum, scale), scale)
+}
+
+function bigDecimalSchema(
+  constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<BigDecimal.BigDecimal> | undefined
+): Schema.Codec<{ readonly value: bigint; readonly scale: number }> {
+  if (constraint?.minimum === undefined && constraint?.maximum === undefined) {
+    return Schema.Struct({
+      value: Schema.BigInt,
+      scale: integerSchema(0, bigDecimalDefaultMaxScale)
+    })
+  }
+  const scale = Math.max(
+    bigDecimalDefaultMaxScale,
+    constraint.minimum?.scale ?? 0,
+    constraint.maximum?.scale ?? 0,
+    constraint.exclusiveMinimum === true && constraint.minimum !== undefined ? constraint.minimum.scale + 1 : 0,
+    constraint.exclusiveMaximum === true && constraint.maximum !== undefined ? constraint.maximum.scale + 1 : 0
+  )
+  const minimum = constraint.minimum === undefined
+    ? undefined
+    : bigDecimalMinimumAtScale(constraint.minimum, scale, constraint.exclusiveMinimum === true)
+  const maximum = constraint.maximum === undefined
+    ? undefined
+    : bigDecimalMaximumAtScale(constraint.maximum, scale, constraint.exclusiveMaximum === true)
+  if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
+    return Schema.Struct({
+      value: Schema.BigInt,
+      scale: integerSchema(0, bigDecimalDefaultMaxScale)
+    })
+  }
+  return Schema.Struct({ value: bigIntSchema(minimum, maximum), scale: Schema.Literal(scale) })
+}
+
+function dateTimeBounds<T extends { readonly epochMilliseconds: number }>(
+  constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<T> | undefined,
+  domainMinimum: number,
+  domainMaximum: number
+): readonly [minimum: number, maximum: number] {
+  const minimum = Math.max(
+    domainMinimum,
+    constraint?.minimum === undefined
+      ? domainMinimum
+      : constraint.minimum.epochMilliseconds + (constraint.exclusiveMinimum === true ? 1 : 0)
+  )
+  const maximum = Math.min(
+    domainMaximum,
+    constraint?.maximum === undefined
+      ? domainMaximum
+      : constraint.maximum.epochMilliseconds - (constraint.exclusiveMaximum === true ? 1 : 0)
+  )
+  return minimum <= maximum ? [minimum, maximum] : [domainMinimum, domainMaximum]
+}
+
+function namedTimeZoneSchema(): Schema.Codec<string> {
+  return Schema.Literals(namedTimeZones)
+}
+
+function timeZoneSchema(): Schema.Codec<number | string> {
+  return Schema.Union([integerSchema(minimumTimeZoneOffset, maximumTimeZoneOffset), namedTimeZoneSchema()])
+}
 
 const schemas: Schemas = {
   Json: () => {
@@ -244,6 +347,24 @@ const schemas: Schemas = {
         : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
     )
     return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+  },
+  BigDecimal: bigDecimalSchema,
+  DateTimeUtc: (constraint) => {
+    const [minimum, maximum] = dateTimeBounds(constraint, minimumDateTimestamp, maximumDateTimestamp)
+    return integerSchema(minimum, maximum)
+  },
+  TimeZoneNamed: namedTimeZoneSchema,
+  TimeZone: timeZoneSchema,
+  DateTimeZoned: (constraint) => {
+    const [minimum, maximum] = dateTimeBounds(
+      constraint,
+      minimumZonedDateTimeTimestamp,
+      maximumZonedDateTimeTimestamp
+    )
+    return Schema.Struct({
+      epochMilliseconds: integerSchema(minimum, maximum),
+      timeZone: timeZoneSchema()
+    })
   },
   Uint8Array: (constraint) => {
     let schema: Schema.Codec<ReadonlyArray<number>> = Schema.Array(

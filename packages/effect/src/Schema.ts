@@ -12851,6 +12851,14 @@ export const BigDecimal: BigDecimal = declare(
         BigDecimalString,
         SchemaTransformation.bigDecimalFromString
       ),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<BigDecimal_.BigDecimal>()(
+        schemas.BigDecimal(constraint),
+        SchemaTransformation.transform({
+          decode: ({ scale, value }) => BigDecimal_.make(value, scale),
+          encode: (value) => ({ value: value.value, scale: value.scale })
+        })
+      ),
     toArbitrary: () => (fc, ctx) => {
       const ordered = ctx.constraint?.ordered?.order === BigDecimal_.Order
         ? ctx.constraint.ordered as Annotations.ToArbitrary.OrderedConstraint<BigDecimal_.BigDecimal>
@@ -13980,6 +13988,14 @@ export const DateTimeUtc: DateTimeUtc = declare(
         String,
         SchemaTransformation.dateTimeUtcFromString
       ),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<DateTime.Utc>()(
+        schemas.DateTimeUtc(constraint),
+        SchemaTransformation.transform({
+          decode: DateTime.makeUnsafe,
+          encode: DateTime.toEpochMillis
+        })
+      ),
     toArbitrary: () => (fc, ctx) =>
       fc.date(dateArbitraryConstraints(
         ctx?.constraint?.ordered?.order === DateTime.Order ? ctx.constraint.ordered : undefined,
@@ -14231,6 +14247,14 @@ export const TimeZoneNamed: TimeZoneNamed = declare(
         TimeZoneNamedString,
         SchemaTransformation.timeZoneNamedFromString
       ),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<DateTime.TimeZone.Named>()(
+        schemas.TimeZoneNamed(constraint),
+        SchemaTransformation.transform({
+          decode: DateTime.zoneMakeNamedUnsafe,
+          encode: (value) => value.id
+        })
+      ),
     toArbitrary: () => (fc) =>
       fc.constantFrom(
         ...["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"].map(
@@ -14331,6 +14355,15 @@ export const TimeZone: TimeZone = declare(
       link<DateTime.TimeZone>()(
         TimeZoneString,
         SchemaTransformation.timeZoneFromString
+      ),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<DateTime.TimeZone>()(
+        schemas.TimeZone(constraint),
+        SchemaTransformation.transform({
+          decode: (value) =>
+            typeof value === "number" ? DateTime.zoneMakeOffset(value) : DateTime.zoneMakeNamedUnsafe(value),
+          encode: (value) => value._tag === "Offset" ? value.offset : value.id
+        })
       ),
     toArbitrary: () => (fc) =>
       fc.oneof(
@@ -14437,6 +14470,17 @@ export const DateTimeZoned: DateTimeZoned = declare(
       link<DateTime.Zoned>()(
         DateTimeZonedString,
         SchemaTransformation.dateTimeZonedFromString
+      ),
+    toCodecArbitrary: ({ constraint, schemas }) =>
+      link<DateTime.Zoned>()(
+        schemas.DateTimeZoned(constraint),
+        SchemaTransformation.transform({
+          decode: ({ epochMilliseconds, timeZone }) => DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone }),
+          encode: (value) => ({
+            epochMilliseconds: value.epochMilliseconds,
+            timeZone: value.zone._tag === "Offset" ? value.zone.offset : value.zone.id
+          })
+        })
       ),
     toArbitrary: () => (fc, ctx) =>
       fc.tuple(
@@ -17021,6 +17065,20 @@ export declare namespace Annotations {
         readonly path: ReadonlyArray<string>
       }>
       readonly Date: (constraint: GenerationConstraint<globalThis.Date> | undefined) => Codec<number>
+      readonly BigDecimal: (
+        constraint: GenerationConstraint<BigDecimal_.BigDecimal> | undefined
+      ) => Codec<{ readonly value: bigint; readonly scale: number }>
+      readonly DateTimeUtc: (constraint: GenerationConstraint<DateTime.Utc> | undefined) => Codec<number>
+      readonly TimeZoneNamed: (
+        constraint: GenerationConstraint<DateTime.TimeZone.Named> | undefined
+      ) => Codec<string>
+      readonly TimeZone: (constraint: GenerationConstraint<DateTime.TimeZone> | undefined) => Codec<number | string>
+      readonly DateTimeZoned: (
+        constraint: GenerationConstraint<DateTime.Zoned> | undefined
+      ) => Codec<{
+        readonly epochMilliseconds: number
+        readonly timeZone: number | string
+      }>
       readonly Uint8Array: (
         constraint: GenerationConstraint<globalThis.Uint8Array<ArrayBufferLike>> | undefined
       ) => Codec<ReadonlyArray<number>>

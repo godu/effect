@@ -2,11 +2,15 @@ import * as Schema from "effect/Schema"
 import * as FastCheck from "effect/testing/FastCheck"
 import assert from "node:assert/strict"
 import {
+  makeBigDecimalSchema,
   makeConstrainedStringSchema,
+  makeDateTimeUtcSchema,
+  makeDateTimeZonedSchema,
   makeRareFilterSchema,
   makeTreeSchema,
   makeUniqueArraySchema,
   validateNumbers,
+  validateSchemaValues,
   validateStrings,
   validateTrees,
   validateUint8Arrays
@@ -50,6 +54,49 @@ export const uint8ArraySample128 = () => {
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateUint8Arrays(128)
+  }
+}
+
+export const bigDecimalSample128 = () => {
+  const schema = makeBigDecimalSchema()
+  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateSchemaValues(schema, 128)
+  }
+}
+
+export const dateTimeUtcSample128 = () => {
+  const schema = makeDateTimeUtcSchema()
+  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateSchemaValues(schema, 128)
+  }
+}
+
+export const timeZoneNamedSample128 = () => {
+  const arbitrary = Schema.toArbitrary(Schema.TimeZoneNamed)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateSchemaValues(Schema.TimeZoneNamed, 128)
+  }
+}
+
+export const timeZoneSample128 = () => {
+  const arbitrary = Schema.toArbitrary(Schema.TimeZone)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateSchemaValues(Schema.TimeZone, 128)
+  }
+}
+
+export const dateTimeZonedSample128 = () => {
+  const schema = makeDateTimeZonedSchema()
+  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: validateSchemaValues(schema, 128)
   }
 }
 

@@ -79,6 +79,68 @@
               "size": 128
             },
             {
+              "name": "big-decimal-sample-128-native",
+              "export": "bigDecimalSample128",
+              "scenario": "arbitrary-big-decimal-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Objects",
+                "BigInt",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "date-time-utc-sample-128-native",
+              "export": "dateTimeUtcSample128",
+              "scenario": "arbitrary-date-time-utc-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "time-zone-named-sample-128-native",
+              "export": "timeZoneNamedSample128",
+              "scenario": "arbitrary-time-zone-named-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "time-zone-sample-128-native",
+              "export": "timeZoneSample128",
+              "scenario": "arbitrary-time-zone-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Union",
+                "Number",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "date-time-zoned-sample-128-native",
+              "export": "dateTimeZonedSample128",
+              "scenario": "arbitrary-date-time-zoned-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Objects",
+                "Union",
+                "Number",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
               "name": "rare-filter-sample-32-native",
               "export": "rareFilterSample32",
               "scenario": "arbitrary-rare-filter-sample-32",
@@ -186,6 +248,41 @@
               "name": "uint8-array-sample-128-fast-check-v4",
               "export": "uint8ArraySample128",
               "scenario": "arbitrary-uint8-array-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "big-decimal-sample-128-fast-check-v4",
+              "export": "bigDecimalSample128",
+              "scenario": "arbitrary-big-decimal-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "date-time-utc-sample-128-fast-check-v4",
+              "export": "dateTimeUtcSample128",
+              "scenario": "arbitrary-date-time-utc-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "time-zone-named-sample-128-fast-check-v4",
+              "export": "timeZoneNamedSample128",
+              "scenario": "arbitrary-time-zone-named-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "time-zone-sample-128-fast-check-v4",
+              "export": "timeZoneSample128",
+              "scenario": "arbitrary-time-zone-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "date-time-zoned-sample-128-fast-check-v4",
+              "export": "dateTimeZonedSample128",
+              "scenario": "arbitrary-date-time-zoned-sample-128",
               "operation": "sample",
               "size": 128
             },

@@ -660,19 +660,17 @@ All direct native AST families complete 100 valid runs with zero discards. `Neve
 derivation error. The legacy compiler's 25 explicit Declaration annotations and the three codec-only built-ins split
 into four measured groups:
 
-| Status                         | Declarations                                                                                                                                              | Result for 100 runs            |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| alternate generation codec     | `Json` / `MutableJson`, `RegExp`, `URL`, `Date`, `Uint8Array`                                                                                             | passed with zero discards      |
-| constructive canonical codec   | `Option`, `Result`, `Redacted`, `CauseReason`, `Cause`, `ErrorInstance`, `Exit`, `ReadonlyMap`, `HashMap`, `ReadonlySet`, `HashSet`, `Chunk`, `Duration`, | passed with zero discards      |
-|                                | `TimeZoneOffset`, Schema-backed `Class`, `File`, `FormData`, `URLSearchParams`                                                                            |                                |
-| productive through rejection   | `BigDecimal`                                                                                                                                              | passed with 228 discards       |
-| no productive route at the cap | `DateTimeUtc`, `TimeZoneNamed`, `TimeZone`, `DateTimeZoned`                                                                                               | exhausted after 5,001 discards |
+| Status                       | Declarations                                                                                                                                              | Result for 100 runs       |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| alternate generation codec   | `Json` / `MutableJson`, `RegExp`, `URL`, `Date`, `BigDecimal`, `Uint8Array`, `DateTimeUtc`, `TimeZoneNamed`, `TimeZone`, `DateTimeZoned`                  | passed with zero discards |
+| constructive canonical codec | `Option`, `Result`, `Redacted`, `CauseReason`, `Cause`, `ErrorInstance`, `Exit`, `ReadonlyMap`, `HashMap`, `ReadonlySet`, `HashSet`, `Chunk`, `Duration`, | passed with zero discards |
+|                              | `TimeZoneOffset`, Schema-backed `Class`, `File`, `FormData`, `URLSearchParams`                                                                            |                           |
 
 `File`, `FormData`, and `URLSearchParams` are the three codec-only built-ins; the other rows account for all 25 legacy
-annotations. The constructive codec group does not justify private overrides. The remaining parity batch is the whole
-sparse canonical-string family: `BigDecimal`, `DateTimeUtc`, `TimeZoneNamed`, `TimeZone`, and `DateTimeZoned`. It should
-be implemented and evaluated together rather than as independent micro-slices, because all five need native domain
-construction instead of generic String decoding and several carry ordered constraints.
+annotations. The constructive codec group does not justify private overrides. The sparse canonical-string family is
+now generated through alternate structural Links: coefficient and scale for `BigDecimal`, epoch milliseconds for
+`DateTimeUtc`, offsets or a useful named-zone catalog for time zones, and epoch milliseconds plus a time zone for
+`DateTimeZoned`. Canonical ordered constraints are translated into the numeric source Schemas before generation.
 
 ## Production vertical slice
 
@@ -818,15 +816,16 @@ Measured on the implemented slice with the two materialized fixtures:
 | Fixture                    | Minified + gzip |
 | -------------------------- | --------------: |
 | fast-check v4 materialized |        78.95 KB |
-| native `Arbitrary.schema`  |        32.74 KB |
-| native minus fast-check    |       -46.21 KB |
+| native `Arbitrary.schema`  |        34.41 KB |
+| native minus fast-check    |       -44.54 KB |
 
-The native fixture is approximately 58.5% smaller. Moving generation-only source Schemas from built-in declarations to
+The native fixture is approximately 56.4% smaller. Moving generation-only source Schemas from built-in declarations to
 the native compiler's factory palette increased the native fixture by 0.58 KB, while reducing the ordinary `config`
-fixture by 1.13 KB compared with the preceding implementation. Relative to the branch merge-base, `config` is now only
-0.19 KB larger instead of 1.32 KB. All other fixtures were unchanged by the move except for reductions of at most 0.03
-KB. The remaining ordinary overhead does not justify moving transformations into the palette without further bundle
-evidence.
+fixture by 1.13 KB compared with the preceding implementation. Adding constructive `BigDecimal`, date-time, and
+time-zone factories then added 1.66 KB to the native fixture. It did not change any ordinary fixture, including
+`config`, or the materialized fast-check fixture. Relative to the branch merge-base, `config` remains only 0.19 KB
+larger instead of 1.32 KB. This is the intended bundle placement: the extra catalog is retained only when native
+generation is imported.
 
 ### Runtime performance baseline
 
@@ -1000,6 +999,25 @@ All eleven cases were statistically inconclusive, with median deltas ranging fro
 slowdown. There is no measured runtime regression attributable to the move. The comparison is recorded in
 `tmp/runtimeperf/results/2026-08-14T15-50-18-456Z-20517-eada80-compare-arbitrary.json`.
 
+The sparse canonical-string parity batch added five paired scenarios. All native fixtures generate constructively with
+zero discards; the comparison measures the generic Schema source and Link decode path against the legacy dedicated
+fast-check maps:
+
+| Scenario                       | Native | fast-check v4 | Native / fast-check |
+| ------------------------------ | -----: | ------------: | ------------------: |
+| 128 constrained BigDecimals    | 432 µs |        260 µs |               1.66x |
+| 128 constrained DateTime.Utc   | 173 µs |         93 µs |               1.86x |
+| 128 named time zones           | 119 µs |         72 µs |               1.64x |
+| 128 offset or named time zones | 163 µs |        122 µs |               1.33x |
+| 128 constrained DateTime.Zoned | 243 µs |        127 µs |               1.92x |
+
+The measurement is recorded in
+`tmp/runtimeperf/results/2026-08-14T16-14-42-358Z-29153-f1b0e3-single-arbitrary.json`. It does not expose a correctness
+tradeoff: target validation, ordered constraints, zero-discard construction, shrinking, and bounded failure remain in
+place. The current overhead is the generic source-Schema compilation and declaration decode/validation path. Profile
+that path with the other codec and carrier costs in the holistic follow-up instead of adding declaration-specific
+native generators.
+
 ## Test plan
 
 ### Kernel and runner
@@ -1128,6 +1146,8 @@ complete, evaluate them together against correctness, counterexample quality, ru
 - [ ] review boundary-oriented distributions across the complete constructor catalog.
 - [ ] profile and optimize generic decoded-collection Links, including the measured `Array<number>` to `Uint8Array`
       conversion, without adding a declaration-specific generator path.
+- [ ] profile generic declaration-Link compilation and per-sample target validation for `BigDecimal`, date-time, and
+      time-zone sources before considering any specialized native path.
 
 No `@effect/fast-check-v4` package or adapter is part of this plan.
 

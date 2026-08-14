@@ -12,7 +12,9 @@ import {
   SchemaIssue,
   SchemaTransformation
 } from "effect"
+import * as BigDecimal from "effect/BigDecimal"
 import * as Chunk from "effect/Chunk"
+import * as DateTime from "effect/DateTime"
 import * as HashMap from "effect/HashMap"
 import * as HashSet from "effect/HashSet"
 import { FastCheck } from "effect/testing"
@@ -193,6 +195,148 @@ describe("Arbitrary", () => {
         })
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") assert.strictEqual(result.counterexample.getTime(), 0)
+      }))
+
+    it.effect("generates and shrinks BigDecimal declarations constructively", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(Schema.BigDecimal)
+        const values = yield* Arbitrary.sample(arbitrary, {
+          count: 500,
+          maxDiscards: 0,
+          seed: "big-decimal-declaration",
+          size: 10
+        })
+
+        assert.isTrue(values.every(Schema.is(Schema.BigDecimal)))
+        assert.isAbove(new Set(values.map((value) => value.scale)).size, 1)
+
+        const constrained = Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.make(1_234n, 3),
+          maximum: BigDecimal.make(1_236n, 3),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        }))
+        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+          count: 500,
+          maxDiscards: 0,
+          seed: "big-decimal-constraints",
+          size: 10
+        })
+
+        assert.isTrue(constrainedValues.every(Schema.is(constrained)))
+
+        const result = yield* Arbitrary.check(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "big-decimal-shrink",
+          size: 10
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.isTrue(BigDecimal.Equivalence(result.counterexample, BigDecimal.make(0n, 0)))
+        }
+      }))
+
+    it.effect("generates and shrinks DateTime.Utc declarations constructively", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(Schema.DateTimeUtc)
+        const values = yield* Arbitrary.sample(arbitrary, {
+          count: 1_000,
+          maxDiscards: 0,
+          seed: "date-time-utc-declaration",
+          size: 10
+        })
+
+        assert.isTrue(values.every(Schema.is(Schema.DateTimeUtc)))
+
+        const isBetweenDateTime = Schema.makeIsBetween({ order: DateTime.Order })
+        const constrained = Schema.DateTimeUtc.check(isBetweenDateTime({
+          minimum: DateTime.makeUnsafe(0),
+          maximum: DateTime.makeUnsafe(10),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        }))
+        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+          count: 500,
+          maxDiscards: 0,
+          seed: "date-time-utc-constraints",
+          size: 10
+        })
+
+        assert.isTrue(constrainedValues.every(Schema.is(constrained)))
+        assert.isTrue(constrainedValues.every((value) => value.epochMilliseconds > 0 && value.epochMilliseconds < 10))
+
+        const result = yield* Arbitrary.check(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "date-time-utc-shrink",
+          size: 10
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.epochMilliseconds, 0)
+      }))
+
+    it.effect("generates named and offset TimeZone declarations constructively", () =>
+      Effect.gen(function*() {
+        const named = yield* Arbitrary.sample(Arbitrary.schema(Schema.TimeZoneNamed), {
+          count: 200,
+          maxDiscards: 0,
+          seed: "time-zone-named-declaration",
+          size: 10
+        })
+        const zones = yield* Arbitrary.sample(Arbitrary.schema(Schema.TimeZone), {
+          count: 1_000,
+          maxDiscards: 0,
+          seed: "time-zone-declaration",
+          size: 10
+        })
+
+        assert.isTrue(named.every(Schema.is(Schema.TimeZoneNamed)))
+        assert.isAbove(new Set(named.map((value) => value.id)).size, 1)
+        assert.isTrue(zones.every(Schema.is(Schema.TimeZone)))
+        assert.isTrue(zones.some(DateTime.isTimeZoneNamed))
+        assert.isTrue(zones.some(DateTime.isTimeZoneOffset))
+      }))
+
+    it.effect("generates and shrinks DateTime.Zoned declarations constructively", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(Schema.DateTimeZoned)
+        const values = yield* Arbitrary.sample(arbitrary, {
+          count: 1_000,
+          maxDiscards: 0,
+          seed: "date-time-zoned-declaration",
+          size: 10
+        })
+
+        assert.isTrue(values.every(Schema.is(Schema.DateTimeZoned)))
+        assert.isTrue(values.some((value) => DateTime.isTimeZoneNamed(value.zone)))
+        assert.isTrue(values.some((value) => DateTime.isTimeZoneOffset(value.zone)))
+
+        const isBetweenDateTime = Schema.makeIsBetween({ order: DateTime.Order })
+        const constrained = Schema.DateTimeZoned.check(isBetweenDateTime({
+          minimum: DateTime.makeZonedUnsafe(0, { timeZone: "UTC" }),
+          maximum: DateTime.makeZonedUnsafe(10, { timeZone: "UTC" }),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        }))
+        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+          count: 500,
+          maxDiscards: 0,
+          seed: "date-time-zoned-constraints",
+          size: 10
+        })
+
+        assert.isTrue(constrainedValues.every(Schema.is(constrained)))
+        assert.isTrue(constrainedValues.every((value) => value.epochMilliseconds > 0 && value.epochMilliseconds < 10))
+
+        const result = yield* Arbitrary.check(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: "date-time-zoned-shrink",
+          size: 10
+        })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.epochMilliseconds, 0)
       }))
 
     it.effect("generates and shrinks Uint8Array declarations through native Array semantics", () =>

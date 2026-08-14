@@ -3,11 +3,15 @@ import * as Schema from "effect/Schema"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import assert from "node:assert/strict"
 import {
+  makeBigDecimalSchema,
   makeConstrainedStringSchema,
+  makeDateTimeUtcSchema,
+  makeDateTimeZonedSchema,
   makeRareFilterSchema,
   makeTreeSchema,
   makeUniqueArraySchema,
   validateNumbers,
+  validateSchemaValues,
   validateStrings,
   validateTrees,
   validateUint8Arrays
@@ -57,6 +61,54 @@ export const uint8ArraySample128 = () => {
   return {
     run: () => Effect.runSync(program),
     validate: validateUint8Arrays(128)
+  }
+}
+
+export const bigDecimalSample128 = () => {
+  const schema = makeBigDecimalSchema()
+  const arbitrary = Arbitrary.schema(schema)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateSchemaValues(schema, 128)
+  }
+}
+
+export const dateTimeUtcSample128 = () => {
+  const schema = makeDateTimeUtcSchema()
+  const arbitrary = Arbitrary.schema(schema)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateSchemaValues(schema, 128)
+  }
+}
+
+export const timeZoneNamedSample128 = () => {
+  const arbitrary = Arbitrary.schema(Schema.TimeZoneNamed)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateSchemaValues(Schema.TimeZoneNamed, 128)
+  }
+}
+
+export const timeZoneSample128 = () => {
+  const arbitrary = Arbitrary.schema(Schema.TimeZone)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateSchemaValues(Schema.TimeZone, 128)
+  }
+}
+
+export const dateTimeZonedSample128 = () => {
+  const schema = makeDateTimeZonedSchema()
+  const arbitrary = Arbitrary.schema(schema)
+  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: validateSchemaValues(schema, 128)
   }
 }
 
