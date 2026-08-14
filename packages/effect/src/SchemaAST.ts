@@ -17,7 +17,6 @@ import * as Effect from "./Effect.ts"
 import * as Exit from "./Exit.ts"
 import { format, formatPropertyKey } from "./Formatter.ts"
 import { identity, memoize, memoizeIdempotent } from "./Function.ts"
-import type * as NativeArbitrary from "./internal/arbitrary/annotation.ts"
 import { effectIsExit, iterateEager } from "./internal/effect.ts"
 import * as InternalRecord from "./internal/record.ts"
 import * as InternalAnnotations from "./internal/schema/annotations.ts"
@@ -3254,6 +3253,11 @@ export function isFinite(annotations?: Schema.Annotations.Filter) {
           noNaN: true
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          number: "finite"
+        }
+      },
       ...annotations
     }
   )
@@ -3315,6 +3319,11 @@ export function isPattern(regExp: globalThis.RegExp, annotations?: Schema.Annota
       },
       toJsonSchema: () => ({ pattern: source }),
       arbitrary: {
+        constraint: {
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
@@ -4278,9 +4287,6 @@ export const Json = new Declaration(
     expected: "JSON value",
     toCodecJson: () => undefined,
     toCodecStringTree: () => unknownToStringTree,
-    "~toArbitrary": (() => (constructors) => constructors.Json<Schema.Json>()) satisfies NativeArbitrary.ToArbitrary<
-      Schema.Json
-    >,
     toArbitrary: () => (fc: typeof FastCheck) => fc.jsonValue()
   }
 )

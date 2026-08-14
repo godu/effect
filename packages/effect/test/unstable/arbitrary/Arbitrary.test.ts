@@ -12,6 +12,9 @@ import {
   SchemaIssue,
   SchemaTransformation
 } from "effect"
+import * as Chunk from "effect/Chunk"
+import * as HashMap from "effect/HashMap"
+import * as HashSet from "effect/HashSet"
 import { FastCheck } from "effect/testing"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
@@ -903,6 +906,105 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every(Schema.is(schema)))
       }))
 
+    it.effect("prefers toCodecArbitrary and passes normalized constraints without Order", () =>
+      Effect.gen(function*() {
+        let received: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<number> | undefined
+        const declaration = Schema.declare<number>((input): input is number => typeof input === "number", {
+          toCodec: () =>
+            Schema.link<number>()(
+              Schema.Literal(99),
+              SchemaTransformation.transform<number, 99>({ decode: (value) => value, encode: () => 99 })
+            ),
+          toCodecArbitrary: ({ constraint }) => {
+            received = constraint
+            return Schema.link<number>()(
+              Schema.Int.check(Schema.isBetween({
+                minimum: constraint?.minimum ?? Number.MIN_SAFE_INTEGER,
+                maximum: constraint?.maximum ?? Number.MAX_SAFE_INTEGER,
+                exclusiveMinimum: constraint?.exclusiveMinimum,
+                exclusiveMaximum: constraint?.exclusiveMaximum
+              })),
+              SchemaTransformation.passthrough()
+            )
+          }
+        }).check(Schema.isBetween({ minimum: 1, maximum: 4, exclusiveMinimum: true }))
+
+        const values = yield* Arbitrary.sample(Arbitrary.schema(declaration), {
+          count: 100,
+          maxDiscards: 0,
+          seed: "to-codec-arbitrary-constraint"
+        })
+
+        assert.deepStrictEqual(received, { minimum: 1, maximum: 4, exclusiveMinimum: true })
+        assert.isTrue(values.every((value) => value > 1 && value <= 4))
+      }))
+
+    it("rejects contradictory native constraints before invoking toCodecArbitrary", () => {
+      let invoked = false
+      const declaration = Schema.declare<number>((input): input is number => typeof input === "number", {
+        toCodecArbitrary: () => {
+          invoked = true
+          return Schema.link<number>()(Schema.Number, SchemaTransformation.passthrough())
+        }
+      }).check(
+        Schema.makeFilter(() => true, { toCodecArbitrary: { constraint: { minLength: 2 } } }),
+        Schema.makeFilter(() => true, { toCodecArbitrary: { constraint: { maxLength: 1 } } })
+      )
+
+      assert.throws(() => Arbitrary.schema(declaration), /Unable to derive an arbitrary for constraints/)
+      assert.isFalse(invoked)
+    })
+
+    it.effect("derives mutually recursive declarations through toCodecArbitrary", () =>
+      Effect.gen(function*() {
+        interface A {
+          readonly _tag: "A"
+          readonly next: B | null
+        }
+        interface B {
+          readonly _tag: "B"
+          readonly next: A | null
+        }
+        let A: Schema.declare<A>
+        let B: Schema.declare<B>
+        A = Schema.declare<A>(
+          (input): input is A => typeof input === "object" && input !== null && (input as A)._tag === "A",
+          {
+            toCodecArbitrary: () =>
+              Schema.link<A>()(
+                Schema.Struct({
+                  _tag: Schema.Literal("A"),
+                  next: Schema.NullOr(Schema.suspend(() => B))
+                }),
+                SchemaTransformation.passthrough()
+              )
+          }
+        )
+        B = Schema.declare<B>(
+          (input): input is B => typeof input === "object" && input !== null && (input as B)._tag === "B",
+          {
+            toCodecArbitrary: () =>
+              Schema.link<B>()(
+                Schema.Struct({
+                  _tag: Schema.Literal("B"),
+                  next: Schema.NullOr(Schema.suspend(() => A))
+                }),
+                SchemaTransformation.passthrough()
+              )
+          }
+        )
+
+        const values = yield* Arbitrary.sample(Arbitrary.schema(A), {
+          count: 100,
+          maxDiscards: 0,
+          seed: "mutual-to-codec-arbitrary",
+          size: 10
+        })
+
+        assert.isTrue(values.every(Schema.is(A)))
+        assert.isTrue(values.some((value) => value.next?._tag === "B"))
+      }))
+
     it.effect("promotes valid shrink descendants through a rejecting canonical codec", () =>
       Effect.gen(function*() {
         const encoded = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))
@@ -970,6 +1072,35 @@ describe("Arbitrary", () => {
             seed: "structural-declarations"
           })
           assert.deepStrictEqual(result, { _tag: "Passed", runs: 20, discards: 0 })
+        }
+      }))
+
+    it.effect("translates collection cardinality constraints through toCodecArbitrary", () =>
+      Effect.gen(function*() {
+        const hashSet = Schema.HashSet(Schema.Int).check(Schema.makeFilter(
+          (value: HashSet.HashSet<number>) => HashSet.size(value) === 3,
+          { toCodecArbitrary: { constraint: { minSize: 3, maxSize: 3 } } }
+        ))
+        const hashMap = Schema.HashMap(Schema.String, Schema.Int).check(Schema.makeFilter(
+          (value: HashMap.HashMap<string, number>) => HashMap.size(value) === 3,
+          { toCodecArbitrary: { constraint: { minSize: 3, maxSize: 3 } } }
+        ))
+        const schemas: ReadonlyArray<readonly [Schema.Top, (value: any) => number]> = [
+          [Schema.Chunk(Schema.Int).check(Schema.isLengthBetween(3, 3)), Chunk.size],
+          [Schema.ReadonlySet(Schema.Int).check(Schema.isSizeBetween(3, 3)), (value) => value.size],
+          [hashSet, HashSet.size],
+          [Schema.ReadonlyMap(Schema.String, Schema.Int).check(Schema.isSizeBetween(3, 3)), (value) => value.size],
+          [hashMap, HashMap.size]
+        ]
+
+        for (const [schema, size] of schemas) {
+          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+            count: 30,
+            maxDiscards: 100,
+            seed: "collection-to-codec-arbitrary",
+            size: 10
+          })
+          assert.isTrue(values.every((value) => size(value) === 3))
         }
       }))
 

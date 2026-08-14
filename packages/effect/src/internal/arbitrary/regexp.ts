@@ -1,7 +1,7 @@
 import type * as Schema from "../../Schema.ts"
 import * as Model from "./model.ts"
 
-type Pattern = Schema.Annotations.ToArbitrary.Pattern
+type Pattern = Schema.Annotations.ToCodecArbitrary.Pattern
 
 type Node = Empty | Literal | Character | Concatenation | Alternation | Repetition
 

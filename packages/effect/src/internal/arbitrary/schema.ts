@@ -8,12 +8,11 @@ import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
-import * as Annotation from "./annotation.ts"
 import * as Model from "./model.ts"
 import * as Regexp from "./regexp.ts"
 
-type Constraint = Schema.Annotations.ToArbitrary.GenerationConstraint
-type OrderedConstraint = Schema.Annotations.ToArbitrary.OrderedConstraint<any>
+type Constraint = Schema.Annotations.ToCodecArbitrary.Constraint<any>
+type GenerationConstraint = Schema.Annotations.ToCodecArbitrary.GenerationConstraint<any>
 
 interface Checks {
   readonly constraint: Constraint | undefined
@@ -21,7 +20,7 @@ interface Checks {
 }
 
 const infinity = Number.POSITIVE_INFINITY
-const finiteNumberConstraint: Constraint = { noInfinity: true, noNaN: true }
+const finiteNumberConstraint: Constraint = { number: "finite" }
 
 function arbitraryError(what: string, path: ReadonlyArray<PropertyKey>) {
   return errorWithPath(`Unable to derive an arbitrary for ${what}`, path)
@@ -55,65 +54,81 @@ function mergeOrderedBound<T>(
     : [self, selfExclusive]
 }
 
-function mergeOrdered(self: OrderedConstraint | undefined, that: OrderedConstraint): OrderedConstraint {
-  if (self === undefined) return that
-  if (self.order !== that.order) {
+function mergeConstraint(self: Constraint | undefined, that: Constraint): Constraint {
+  const order = that.order ?? self?.order
+  if (self?.order !== undefined && that.order !== undefined && self.order !== that.order) {
     throw new Error("Cannot merge ordered arbitrary constraints with different Order instances")
   }
-  const [minimum, exclusiveMinimum] = mergeOrderedBound(
-    self.order,
-    self.minimum,
-    self.exclusiveMinimum,
-    that.minimum,
-    that.exclusiveMinimum,
-    -1
-  )
-  const [maximum, exclusiveMaximum] = mergeOrderedBound(
-    self.order,
-    self.maximum,
-    self.exclusiveMaximum,
-    that.maximum,
-    that.exclusiveMaximum,
-    1
-  )
-  return {
-    order: self.order,
-    ...(minimum === undefined ? undefined : { minimum }),
-    ...(exclusiveMinimum === undefined ? undefined : { exclusiveMinimum }),
-    ...(maximum === undefined ? undefined : { maximum }),
-    ...(exclusiveMaximum === undefined ? undefined : { exclusiveMaximum })
-  }
-}
-
-function mergeConstraint(self: Constraint | undefined, that: Constraint): Constraint {
-  const minLength = self?.minLength === undefined
-    ? that.minLength
-    : that.minLength === undefined
-    ? self.minLength
-    : Math.max(self.minLength, that.minLength)
-  const maxLength = self?.maxLength === undefined
-    ? that.maxLength
-    : that.maxLength === undefined
-    ? self.maxLength
-    : Math.min(self.maxLength, that.maxLength)
+  const [minimum, exclusiveMinimum] = order === undefined
+    ? [that.minimum ?? self?.minimum, that.exclusiveMinimum ?? self?.exclusiveMinimum]
+    : mergeOrderedBound(
+      order,
+      self?.minimum,
+      self?.exclusiveMinimum,
+      that.minimum,
+      that.exclusiveMinimum,
+      -1
+    )
+  const [maximum, exclusiveMaximum] = order === undefined
+    ? [that.maximum ?? self?.maximum, that.exclusiveMaximum ?? self?.exclusiveMaximum]
+    : mergeOrderedBound(
+      order,
+      self?.maximum,
+      self?.exclusiveMaximum,
+      that.maximum,
+      that.exclusiveMaximum,
+      1
+    )
+  const mergeMinimum = (
+    key: "minLength" | "minSize" | "minProperties"
+  ): number | undefined =>
+    self?.[key] === undefined
+      ? that[key]
+      : that[key] === undefined
+      ? self[key]
+      : Math.max(self[key], that[key])
+  const mergeMaximum = (
+    key: "maxLength" | "maxSize" | "maxProperties"
+  ): number | undefined =>
+    self?.[key] === undefined
+      ? that[key]
+      : that[key] === undefined
+      ? self[key]
+      : Math.min(self[key], that[key])
+  const minLength = mergeMinimum("minLength")
+  const maxLength = mergeMaximum("maxLength")
+  const minSize = mergeMinimum("minSize")
+  const maxSize = mergeMaximum("maxSize")
+  const minProperties = mergeMinimum("minProperties")
+  const maxProperties = mergeMaximum("maxProperties")
   const patterns = self?.patterns === undefined
     ? that.patterns
     : that.patterns === undefined
     ? self.patterns
     : [...self.patterns, ...that.patterns] as [
-      Schema.Annotations.ToArbitrary.Pattern,
-      ...Array<Schema.Annotations.ToArbitrary.Pattern>
+      Schema.Annotations.ToCodecArbitrary.Pattern,
+      ...Array<Schema.Annotations.ToCodecArbitrary.Pattern>
     ]
-  const ordered = that.ordered === undefined ? self?.ordered : mergeOrdered(self?.ordered, that.ordered)
+  const number = self?.number === "integer" || that.number === "integer"
+    ? "integer"
+    : self?.number === "finite" || that.number === "finite"
+    ? "finite"
+    : undefined
   return {
+    ...(order === undefined ? undefined : { order }),
+    ...(minimum === undefined ? undefined : { minimum }),
+    ...(exclusiveMinimum === true ? { exclusiveMinimum: true } : undefined),
+    ...(maximum === undefined ? undefined : { maximum }),
+    ...(exclusiveMaximum === true ? { exclusiveMaximum: true } : undefined),
     ...(minLength === undefined ? undefined : { minLength }),
     ...(maxLength === undefined ? undefined : { maxLength }),
+    ...(minSize === undefined ? undefined : { minSize }),
+    ...(maxSize === undefined ? undefined : { maxSize }),
+    ...(minProperties === undefined ? undefined : { minProperties }),
+    ...(maxProperties === undefined ? undefined : { maxProperties }),
     ...(patterns === undefined ? undefined : { patterns }),
-    ...(self?.integer === true || that.integer === true ? { integer: true } : undefined),
-    ...(self?.noInfinity === true || that.noInfinity === true ? { noInfinity: true } : undefined),
-    ...(self?.noNaN === true || that.noNaN === true ? { noNaN: true } : undefined),
-    ...(self?.unique === true || that.unique === true ? { unique: true } : undefined),
-    ...(ordered === undefined ? undefined : { ordered })
+    ...(number === undefined ? undefined : { number }),
+    ...(self?.unique === true || that.unique === true ? { unique: true } : undefined)
   }
 }
 
@@ -121,7 +136,7 @@ function collectChecks(checks: SchemaAST.Checks | undefined, inherited: Constrai
   let constraint = inherited
   const filters: Array<SchemaAST.Filter<any>> = []
   const visit = (check: SchemaAST.Check<any>): void => {
-    const next = check.annotations?.arbitrary?.constraint
+    const next = check.annotations?.toCodecArbitrary?.constraint
     if (next !== undefined) constraint = mergeConstraint(constraint, next)
     if (check._tag === "Filter") {
       filters.push(check)
@@ -133,13 +148,50 @@ function collectChecks(checks: SchemaAST.Checks | undefined, inherited: Constrai
   return { constraint, filters }
 }
 
+function validateConstraint(constraint: Constraint | undefined, path: ReadonlyArray<PropertyKey>): void {
+  if (constraint === undefined) return
+  const cardinalities = [
+    [constraint.minLength, constraint.maxLength],
+    [constraint.minSize, constraint.maxSize],
+    [constraint.minProperties, constraint.maxProperties]
+  ] as const
+  for (const [minimum, maximum] of cardinalities) {
+    if (
+      minimum !== undefined && (!Number.isSafeInteger(minimum) || minimum < 0) ||
+      maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < 0) ||
+      minimum !== undefined && maximum !== undefined && minimum > maximum
+    ) {
+      throw arbitraryError("constraints", path)
+    }
+  }
+  if (constraint.order !== undefined && constraint.minimum !== undefined && constraint.maximum !== undefined) {
+    const comparison = constraint.order(constraint.minimum, constraint.maximum)
+    if (
+      comparison > 0 ||
+      comparison === 0 && (constraint.exclusiveMinimum === true || constraint.exclusiveMaximum === true)
+    ) {
+      throw arbitraryError("constraints", path)
+    }
+  }
+}
+
+function withoutOrder(constraint: Constraint | undefined): GenerationConstraint | undefined {
+  if (constraint === undefined) return undefined
+  const { order: _, ...out } = constraint
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
 function lengthBounds(
   constraint: Constraint | undefined,
+  keys: readonly [
+    minimum: "minLength" | "minSize" | "minProperties",
+    maximum: "maxLength" | "maxSize" | "maxProperties"
+  ],
   path: ReadonlyArray<PropertyKey>,
   label: string
 ): readonly [minimum: number, maximum: number | undefined] {
-  const minimum = constraint?.minLength ?? 0
-  const maximum = constraint?.maxLength
+  const minimum = constraint?.[keys[0]] ?? 0
+  const maximum = constraint?.[keys[1]]
   if (
     !Number.isSafeInteger(minimum) || minimum < 0 ||
     maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < minimum)
@@ -402,7 +454,7 @@ function randomString(state: Model.GenerationState, minimum: number, maximum: nu
 }
 
 function numberBounds(constraint: Constraint | undefined, integer: boolean, path: ReadonlyArray<PropertyKey>) {
-  const ordered = constraint?.ordered?.order === Order.Number ? constraint.ordered : undefined
+  const ordered = constraint?.order === Order.Number ? constraint : undefined
   let minimum = ordered?.minimum as number | undefined
   let maximum = ordered?.maximum as number | undefined
   if (minimum !== undefined && Number.isNaN(minimum) || maximum !== undefined && Number.isNaN(maximum)) {
@@ -433,7 +485,7 @@ function numberBounds(constraint: Constraint | undefined, integer: boolean, path
       maximum = ordered?.exclusiveMaximum === true ? Model.previousNumber(maximum) : maximum === 0 ? 0 : maximum
     }
   }
-  if (integer || constraint?.noInfinity === true) {
+  if (integer || constraint?.number === "finite") {
     if (minimum === Infinity || maximum === -Infinity) {
       throw arbitraryError(integer ? "integer constraints" : "number constraints", path)
     }
@@ -590,251 +642,6 @@ function numberSample(
   )
 }
 
-function makeJson(): Model.Compiled<unknown> {
-  let self: Model.Compiled<unknown>
-  const randomNumber = Model.makeRandomNumber(-100, 100, false)
-  const leaf = (state: Model.GenerationState): Model.Sample<unknown> => {
-    const choice = Model.randomIndex(state, 4)
-    switch (choice) {
-      case 0:
-        return Model.makeSample(null)
-      case 1:
-        const number = randomNumber(state)
-        return state.shrinks
-          ? numberSample(number, undefined, undefined, false)
-          : Model.makeSample(number)
-      case 2:
-        return Model.makeSample(Model.randomBoolean(state))
-      default: {
-        const value = randomString(state, 0, state.size)
-        return state.shrinks
-          ? Model.sampleFromShrink(value, (value) => shrinkString(value, 0))
-          : Model.makeSample(value)
-      }
-    }
-  }
-  self = Model.makeCompiled<unknown>(
-    [],
-    () => 0,
-    (state) => {
-      const canRecur = state.budget.remaining > 0
-      const choice = Model.randomIndex(state, canRecur ? 6 : 4)
-      if (choice < 4) return Model.generated(leaf(state))
-      state.budget.remaining--
-      const length = Model.randomLength(state, 0, state.size)
-      return Model.mapComputation(generateSamples(Array.from({ length }, () => self), state), (children) => {
-        if (Option.isNone(children)) return Model.discarded
-        if (choice === 4) {
-          return Model.generated(arraySample(children.value, {
-            fixedCount: 0,
-            optionalCount: 0,
-            repeatCount: children.value.length,
-            tailCount: 0,
-            minimum: 0
-          }, state.shrinks))
-        }
-        // Bounded duplicate retries follow fast-check v4.9.0's ArrayArbitrary uniqueness strategy (MIT), adapted here
-        // to JSON member names so generation cannot wait indefinitely on collisions.
-        // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
-        const keys: Array<Model.Sample<string>> = []
-        const seen = new Set<string>()
-        for (let index = 0; index < length; index++) {
-          let key = randomString(state, 0, state.size)
-          let retries = 0
-          while (seen.has(key)) {
-            if (++retries >= 10) return Model.discarded
-            key = randomString(state, 0, state.size)
-          }
-          seen.add(key)
-          keys.push(
-            state.shrinks ? Model.sampleFromShrink(key, (value) => shrinkString(value, 0)) : Model.makeSample(key)
-          )
-        }
-        const entries = children.value.map((sample, index) => ({
-          key: keys[index].value,
-          keySample: keys[index],
-          sample,
-          removable: true
-        }))
-        return Model.generated(objectSample(entries, 0, state.shrinks))
-      })
-    }
-  )
-  self.minCost = 0
-  return self
-}
-
-const regExpSources = [
-  ".",
-  ".*",
-  "\\d+",
-  "\\w+",
-  "[a-z]+",
-  "[A-Z]+",
-  "[0-9]+",
-  "^[a-zA-Z0-9]+$",
-  "^\\d{4}-\\d{2}-\\d{2}$"
-] as const
-
-const regExpFlags = ["g", "i", "m", "s", "u", "y"] as const
-
-function shrinkRegExp(value: globalThis.RegExp): ReadonlyArray<globalThis.RegExp> {
-  const candidates: Array<globalThis.RegExp> = []
-  if (value.source !== "(?:)") candidates.push(new globalThis.RegExp(""))
-  if (value.flags !== "") candidates.push(new globalThis.RegExp(value.source))
-  return candidates
-}
-
-function makeRegExp(): Model.Compiled<globalThis.RegExp> {
-  const compiled = Model.makeCompiled(
-    [],
-    () => 0,
-    (state) => {
-      const source = regExpSources[Model.randomIndex(state, regExpSources.length)]
-      let flags = ""
-      for (const flag of regExpFlags) if (Model.randomBoolean(state)) flags += flag
-      const value = new globalThis.RegExp(source, flags)
-      return Model.generated(
-        state.shrinks ? Model.sampleFromShrink(value, shrinkRegExp) : Model.makeSample(value)
-      )
-    }
-  )
-  compiled.minCost = 0
-  return compiled
-}
-
-const lowerAlphaCharacters = "abcdefghijklmnopqrstuvwxyz"
-const lowerAlphaNumericCharacters = `${lowerAlphaCharacters}0123456789`
-const webSegmentCharacters = `${lowerAlphaNumericCharacters}${lowerAlphaCharacters.toUpperCase()}-._~`
-
-function randomCharacters(
-  state: Model.GenerationState,
-  characters: string,
-  minimum: number,
-  maximum: number
-): string {
-  const length = Model.randomLength(state, minimum, maximum)
-  let out = ""
-  for (let index = 0; index < length; index++) {
-    out += characters[Model.randomIndex(state, characters.length)]
-  }
-  return out
-}
-
-function randomDnsLabel(state: Model.GenerationState, maximum: number): string {
-  const length = Model.randomLength(state, 1, maximum)
-  if (length === 1) return lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
-  const first = lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
-  const middle = randomCharacters(state, `${lowerAlphaNumericCharacters}-`, length - 2, length - 2)
-  const last = lowerAlphaNumericCharacters[Model.randomIndex(state, lowerAlphaNumericCharacters.length)]
-  const label = `${first}${middle}${last}`
-  return label.startsWith("xn--") ? `${label.slice(0, 2)}0${label.slice(3)}` : label
-}
-
-function randomDomain(state: Model.GenerationState): string {
-  const maximumLabels = Math.min(126, Math.max(1, state.size))
-  const labelCount = Model.randomLength(state, 1, maximumLabels)
-  const contentBudget = 255 - labelCount
-  const labels: Array<string> = []
-  let used = 0
-  for (let index = 0; index < labelCount; index++) {
-    const remainingMinimum = labelCount - index - 1 + 2
-    const maximum = Math.min(63, Math.max(1, state.size), contentBudget - used - remainingMinimum)
-    const label = randomDnsLabel(state, maximum)
-    labels.push(label)
-    used += label.length
-  }
-  const maximumSuffix = Math.min(63, Math.max(2, state.size), contentBudget - used)
-  labels.push(randomCharacters(state, lowerAlphaCharacters, 2, maximumSuffix))
-  return labels.join(".")
-}
-
-function shrinkURL(value: globalThis.URL): ReadonlyArray<globalThis.URL> {
-  const candidates: Array<globalThis.URL> = []
-  if (value.protocol === "https:") {
-    const candidate = new globalThis.URL(value.href)
-    candidate.protocol = "http:"
-    candidates.push(candidate)
-  }
-  if (value.hostname !== "a.aa") {
-    const candidate = new globalThis.URL(value.href)
-    candidate.hostname = "a.aa"
-    candidates.push(candidate)
-  }
-  if (value.pathname !== "/") {
-    const candidate = new globalThis.URL(value.href)
-    candidate.pathname = "/"
-    candidates.push(candidate)
-  }
-  return [...new Map(candidates.map((candidate) => [candidate.href, candidate])).values()]
-}
-
-function makeURL(): Model.Compiled<globalThis.URL> {
-  const compiled = Model.makeCompiled(
-    [],
-    () => 0,
-    (state) => {
-      // The scheme + DNS authority + path composition follows fast-check v4.9.0's webUrl model (MIT), implemented
-      // independently on the Effect-owned generator and shrink carrier.
-      // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/webUrl.ts
-      const scheme = Model.randomBoolean(state) ? "http" : "https"
-      const dimension = Math.ceil(Math.sqrt(state.size))
-      const segmentCount = dimension === 0 ? 0 : Model.randomLength(state, 0, dimension)
-      let path = ""
-      for (let index = 0; index < segmentCount; index++) {
-        path += `/${randomCharacters(state, webSegmentCharacters, 0, dimension)}`
-      }
-      const value = new globalThis.URL(`${scheme}://${randomDomain(state)}${path}`)
-      return Model.generated(
-        state.shrinks ? Model.sampleFromShrink(value, shrinkURL) : Model.makeSample(value)
-      )
-    }
-  )
-  compiled.minCost = 0
-  return compiled
-}
-
-const minimumDateTimestamp = -8_640_000_000_000_000
-const maximumDateTimestamp = 8_640_000_000_000_000
-
-function makeDate(
-  ordered: OrderedConstraint | undefined,
-  path: ReadonlyArray<PropertyKey>
-): Model.Compiled<globalThis.Date> {
-  let minimum = minimumDateTimestamp
-  let maximum = maximumDateTimestamp
-  if (ordered?.minimum !== undefined) {
-    const timestamp = (ordered.minimum as globalThis.Date).getTime()
-    if (Number.isNaN(timestamp)) throw arbitraryError("date constraints", path)
-    minimum = Math.max(minimum, timestamp + (ordered.exclusiveMinimum === true ? 1 : 0))
-  }
-  if (ordered?.maximum !== undefined) {
-    const timestamp = (ordered.maximum as globalThis.Date).getTime()
-    if (Number.isNaN(timestamp)) throw arbitraryError("date constraints", path)
-    maximum = Math.min(maximum, timestamp - (ordered.exclusiveMaximum === true ? 1 : 0))
-  }
-  if (minimum > maximum) throw arbitraryError("date constraints", path)
-  // Like fast-check v4.9.0's date arbitrary (MIT), valid dates are generated by mapping the complete JavaScript
-  // timestamp interval instead of filtering ISO strings. Effect reuses its native integer bias and shrink carrier.
-  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/date.ts
-  const randomTimestamp = Model.makeRandomNumericInt(minimum, maximum)
-  const compiled = Model.makeCompiled(
-    [],
-    () => 0,
-    (state) => {
-      const timestamp = randomTimestamp(state)
-      const sample = numberSample(timestamp, minimum, maximum, true)
-      return Model.generated(
-        state.shrinks
-          ? Model.mapSample(sample, (timestamp) => new globalThis.Date(timestamp))
-          : Model.makeSample(new globalThis.Date(timestamp))
-      )
-    }
-  )
-  compiled.minCost = 0
-  return compiled
-}
-
 /** @internal */
 export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<S["Type"]> {
   const rootAst = SchemaAST.toType(schema.ast)
@@ -843,41 +650,6 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   const nodes: Array<Model.Compiled<any>> = []
   const suspendBodies = new Map<Model.Compiled<any>, Model.Compiled<any>>()
   const pending: Array<() => void> = []
-  const json = makeJson()
-  const uint8ArrayRepresentation = Schema.Array(
-    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))
-  ).ast
-  const makeConstructors = (
-    constraint: Constraint | undefined,
-    path: ReadonlyArray<PropertyKey>
-  ): Annotation.Constructors => ({
-    Date: () =>
-      makeDate(
-        constraint?.ordered?.order === Order.Date ? constraint.ordered : undefined,
-        path
-      ) as unknown as Annotation.Arbitrary<globalThis.Date>,
-    Json: () => json as unknown as Annotation.Arbitrary<any>,
-    RegExp: () => makeRegExp() as unknown as Annotation.Arbitrary<globalThis.RegExp>,
-    Uint8Array: () => {
-      // Like fast-check v4.9.0's typed integer array builder (MIT), reuse Array<Integer> generation and its complete
-      // shrink tree, then map the representation to the typed array without Base64 filtering.
-      // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/builders/TypedIntArrayArbitraryBuilder.ts
-      const array = recur(uint8ArrayRepresentation, path, constraint)
-      const compiled = Model.makeCompiled(
-        [array],
-        () => array.minCost,
-        (state) =>
-          Model.mapGeneration(array.generate(state), (attempt) =>
-            attempt._tag === "Discarded"
-              ? Model.discarded
-              : Model.generated(Model.mapSample(attempt.sample, (values) => globalThis.Uint8Array.from(values))))
-      )
-      compiled.minCost = 0
-      return compiled as unknown as Annotation.Arbitrary<globalThis.Uint8Array<ArrayBufferLike>>
-    },
-    URL: () => makeURL() as unknown as Annotation.Arbitrary<globalThis.URL>
-  })
-
   const recur = (
     ast: SchemaAST.AST,
     path: ReadonlyArray<PropertyKey>,
@@ -972,7 +744,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           pattern = Regexp.compile(constraint)
           if (pattern !== undefined) break
         }
-        const [minimum, maximum] = lengthBounds(constraint, path, "string")
+        const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "string")
         if (pattern !== undefined && maximum !== undefined && !pattern.hasLengthBetween(minimum, maximum)) {
           throw arbitraryError("string constraints", path)
         }
@@ -1003,12 +775,12 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       }
       case "Number": {
-        const integer = constraint?.integer === true
+        const integer = constraint?.number === "integer"
         const bounds = numberBounds(constraint, integer, path)
-        const numberMinimum = bounds.minimum ?? (constraint?.noInfinity === true
+        const numberMinimum = bounds.minimum ?? (constraint?.number !== undefined
           ? -Number.MAX_VALUE
           : Number.NEGATIVE_INFINITY)
-        const numberMaximum = bounds.maximum ?? (constraint?.noInfinity === true
+        const numberMaximum = bounds.maximum ?? (constraint?.number !== undefined
           ? Number.MAX_VALUE
           : Number.POSITIVE_INFINITY)
         const randomNumber = integer
@@ -1016,7 +788,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           : Model.makeRandomNumber(
             numberMinimum,
             numberMaximum,
-            constraint?.noNaN !== true && bounds.minimum === undefined && bounds.maximum === undefined
+            constraint?.number === undefined && bounds.minimum === undefined && bounds.maximum === undefined
           )
         let integerMinimum: number | undefined
         let integerMaximum: number | undefined
@@ -1054,7 +826,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       }
       case "BigInt": {
-        const ordered = constraint?.ordered?.order === Order.BigInt ? constraint.ordered : undefined
+        const ordered = constraint?.order === Order.BigInt ? constraint : undefined
         let minimum = ordered?.minimum as bigint | undefined
         let maximum = ordered?.maximum as bigint | undefined
         if (minimum !== undefined && ordered?.exclusiveMinimum === true) minimum++
@@ -1105,8 +877,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       }
       case "Unknown":
       case "Any":
-        return json
-      case "ObjectKeyword":
+        return recur(Schema.Json.ast, path)
+      case "ObjectKeyword": {
+        const json = recur(Schema.Json.ast, path)
         return Model.makeCompiled(
           [json],
           () => 0,
@@ -1121,6 +894,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               return Model.generated(Model.makeSample({}))
             })
         )
+      }
       case "Enum": {
         const values = [...new Set(ast.enums.map(([, value]) => value))]
         if (values.length === 0) throw arbitraryError("an enum with no members", path)
@@ -1219,7 +993,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     const rest = ast.rest.map((element, index) => recur(element, [...path, elements.length + index]))
     const head = rest[0]
     const tail = rest.slice(1)
-    const [minimum, maximum] = lengthBounds(constraint, path, "array")
+    const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "array")
     if (
       maximum !== undefined && maximum < required + tail.length ||
       head === undefined && minimum > elements.length + tail.length
@@ -1366,7 +1140,12 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     }))
     const required = properties.filter((property) => !property.optional)
     const optional = properties.filter((property) => property.optional)
-    const [minimum, maximum] = lengthBounds(constraint, path, "object property")
+    const [minimum, maximum] = lengthBounds(
+      constraint,
+      ["minProperties", "maxProperties"],
+      path,
+      "object property"
+    )
     if (maximum !== undefined && maximum < required.length || indexes.length === 0 && minimum > properties.length) {
       throw arbitraryError("object property constraints", path)
     }
@@ -1467,32 +1246,29 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     path: ReadonlyArray<PropertyKey>,
     constraint: Constraint | undefined
   ): Model.Compiled<any> => {
+    validateConstraint(constraint, path)
     const typeParameters = ast.typeParameters.map((parameter, index) => recur(parameter, [...path, index]))
-    const annotation = ast.annotations?.[Annotation.ToArbitraryKey]
-    if (typeof annotation === "function") {
-      const compiled = (annotation as Annotation.ToArbitrary<any>)(
-        typeParameters as unknown as ReadonlyArray<Annotation.Arbitrary<unknown>>
-      )(makeConstructors(constraint, path)) as unknown as Model.Compiled<any>
-      return Model.makeCompiled(
-        [compiled, ...typeParameters],
-        () => compiled.minCost,
-        (state) => compiled.generate(state)
-      )
-    }
     const parameters = ast.typeParameters.map((parameter) => Schema.make(SchemaAST.toType(parameter)))
-    const getJson = ast.annotations?.toCodecJson
-    const link: SchemaAST.Link = typeof getJson === "function"
-      ? (() => {
-        const link = getJson(parameters)
-        if (link === undefined) throw arbitraryError("an opaque self-canonical Declaration", path)
-        return link
-      })()
-      : (() => {
+    const getArbitrary = ast.annotations?.toCodecArbitrary
+    let link: SchemaAST.Link
+    if (typeof getArbitrary === "function") {
+      link = getArbitrary({
+        typeParameters: parameters,
+        constraint: withoutOrder(constraint)
+      })
+    } else {
+      const getJson = ast.annotations?.toCodecJson
+      if (typeof getJson === "function") {
+        const jsonLink = getJson(parameters)
+        if (jsonLink === undefined) throw arbitraryError("an opaque self-canonical Declaration", path)
+        link = jsonLink
+      } else {
         const get = ast.annotations?.toCodec
         if (typeof get !== "function") throw arbitraryError("an unsupported Declaration", path)
-        return get(parameters)
-      })()
-    const target = recur(SchemaAST.toType(link.to), path, constraint)
+        link = get(parameters)
+      }
+    }
+    const target = recur(SchemaAST.toType(link.to), path)
     const decodeDeclaration = Schema.decodeUnknownEffect(Schema.make(ast)) as (
       input: unknown
     ) => Effect.Effect<unknown, Schema.SchemaError>

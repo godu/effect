@@ -1,4 +1,4 @@
-import { type Effect, hole, Schema } from "effect"
+import { type Effect, hole, Schema, type SchemaAST } from "effect"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { describe, expect, it } from "tstyche"
 
@@ -20,5 +20,25 @@ describe("Arbitrary", () => {
     expect(Arbitrary.check(arbitrary, property)).type.toBe<
       Effect.Effect<Arbitrary.CheckResult<string, "error">, never, "service">
     >()
+  })
+
+  it("types toCodecArbitrary inputs from the declaration target and decoded type parameters", () => {
+    interface Box {
+      readonly value: number
+    }
+
+    Schema.declareConstructor<Box>()(
+      [Schema.NumberFromString],
+      hole(),
+      {
+        toCodecArbitrary: (input) => {
+          expect(input.typeParameters).type.toBe<readonly [Schema.Codec<number>]>()
+          expect(input.constraint).type.toBe<
+            Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Box> | undefined
+          >()
+          return hole<SchemaAST.Link>()
+        }
+      }
+    )
   })
 })

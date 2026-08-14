@@ -186,10 +186,10 @@ There is no stable `effect/Arbitrary` alias.
 
 ### Declaration resolution
 
-The initial compiler uses only annotations that already exist, plus the private native override. Resolution order is:
+The native compiler uses this resolution order:
 
 ```text
-1. ~toArbitrary
+1. toCodecArbitrary
 2. toCodecJson
 3. toCodec
 4. derivation error
@@ -198,39 +198,52 @@ The initial compiler uses only annotations that already exist, plus the private 
 The current fast-check `toArbitrary` key is not consulted by the native compiler. This keeps the two implementations
 independent and makes missing native coverage visible.
 
-`toCodecArbitrary` remains a candidate extension, not an API that the first slice must add. Its proposed shape would be
-the same as the other canonical codec callbacks:
+`toCodecArbitrary` is an experimental Declaration annotation. It receives decoded type-parameter schemas plus the
+normalized constraints for the declared target and returns a Link:
 
 ```ts
-readonly toCodecArbitrary?:
-  | ((typeParameters: TypeParameters.Encoded<TypeParameters>) => SchemaAST.Link)
-  | undefined
+toCodecArbitrary: ;
+;(({ typeParameters, constraint }) => SchemaAST.Link)
 ```
 
-It would select an alternate representation intended to be more productive or efficient for generation. The current
-built-in audit does not justify making that seam public: a built-in can use private `~toArbitrary`, while an ordinary
-declaration can already expose `toCodecJson` or `toCodec`. The compiler should add `toCodecArbitrary` only when a real
-user-authored declaration needs an alternate generation representation and its canonical codec demonstrably cannot
-meet the validity, exhaustion, shrink-quality, or performance gates.
+The callback receives this flat normalized shape; absent fields are omitted and `constraint` itself is `undefined` when
+there is no effective hint:
 
-If the annotation is introduced provisionally during migration, it has a deletion test before the unstable API is
-considered complete:
+```ts
+interface GenerationConstraint<T = unknown> {
+  readonly minimum?: T
+  readonly exclusiveMinimum?: true
+  readonly maximum?: T
+  readonly exclusiveMaximum?: true
+  readonly minLength?: number
+  readonly maxLength?: number
+  readonly minSize?: number
+  readonly maxSize?: number
+  readonly minProperties?: number
+  readonly maxProperties?: number
+  readonly patterns?: readonly [Pattern, ...Array<Pattern>]
+  readonly number?: "finite" | "integer"
+  readonly unique?: true
+}
+```
 
-1. list production occurrences, excluding compiler branch tests and synthetic fixtures;
-2. replace every built-in-only occurrence with either its canonical codec or private `~toArbitrary`;
-3. retain the public annotation only if at least one non-built-in use case needs an alternate structural Link;
-4. otherwise remove the annotation type, compiler branch, tests, and annotation-exclusion entry together.
+Raw filter contributions may additionally carry `order`. The compiler uses it to merge bounds and removes it before
+calling the Declaration. `number: "integer"` subsumes finiteness.
 
-An annotation used only to test itself does not pass this test.
+The Link selects an alternate Schema representation intended to be more productive or efficient for generation. The
+callback translates target-domain constraints into checks on that source Schema; the compiler does not forward them
+unchanged. Original target checks remain residual after decoding. Decode failures are bounded discards, so the
+alternate codec may be partial without making sampling hang.
 
-`~toArbitrary` is a private key for trusted Effect built-ins. It returns the opaque native arbitrary directly and has
-precedence over all codec routes. It is not added to the public `Schema.Annotations.Declaration` interface and cannot be
-provided by application code. Its private callback signature may receive internal constructors and compiled type
-parameters, but it exposes no public builder or context.
+This seam passes the deletion test through production uses for recursive JSON, RegExp, URL, Date, Uint8Array, and
+collection cardinality. It removes the private `~toArbitrary` HKT, the constructor algebra, and the central catalog of
+specialized generators. User-defined Declarations can use the same Schema-only interface without importing the native
+Arbitrary module.
 
 `toCodecJson: () => undefined` means that a declaration is already canonical JSON; it does not reveal a structural
-shape. It is an explicit self-canonical result rather than an instruction to try `toCodec`. If `~toArbitrary` has not
-handled that declaration, derivation fails. `Schema.Json` therefore needs an explicit native path.
+shape. It is an explicit self-canonical result rather than an instruction to try `toCodec`. If `toCodecArbitrary` has
+not handled that declaration, derivation fails. `Schema.Json` therefore provides a recursive structural generation
+codec.
 
 If all three routes are absent, `Arbitrary.schema` fails immediately. It never falls back to `Unknown`, `Any`, or the
 generic `Json` declaration for an opaque type.
@@ -257,51 +270,41 @@ Instead:
 - primitive and structural generators are correct by construction;
 - every node-local Schema check is retained as a residual filter even when it supplied a constructive hint;
 - codec routes necessarily run the selected Link decoding;
-- `~toArbitrary` is trusted and verified by Effect's conformance tests;
 - no second, whole-Schema validation pass runs after generation.
 
-This does not allow `~toArbitrary` to bypass checks attached by a caller. The direct built-in recipe is trusted for the
-base Declaration domain; subsequent node-local checks still run through the ordinary filter layer.
+`toCodecArbitrary` cannot bypass checks attached by a caller. Its decoded values still pass through the Declaration
+parser and subsequent node-local checks run through the ordinary filter layer.
 
-`arbitrary.constraint` therefore remains a generation hint rather than a proof that a filter can be removed. This is
+`toCodecArbitrary.constraint` therefore remains a generation hint rather than a proof that a filter can be removed. This is
 required for compositions such as multiple regular-expression patterns: the merged hints can improve candidate
 generation without being a constructive representation of their conjunction. No exactness marker or built-in filter
 registry is introduced.
 
 ## Deep module seams
 
-The design has one external seam and two private seams:
+The design has one external seam and one Schema-owned seam:
 
 ```text
 External seam
   Arbitrary.schema / sample / check
 
-Private seam A
+Schema-owned seam
   SchemaAST compiler -> opaque kernel constructors
-
-Private seam B
-  trusted ~toArbitrary callback -> private built-in constructor kit
 ```
 
 The external module is deep: callers learn three operations while the implementation owns graph compilation,
 constraint interpretation, rejection, shrinking, replay, and execution.
 
-The second private seam is necessary to keep `~toArbitrary` local without introducing a runtime cycle:
+Generation codecs avoid a runtime cycle:
 
 ```text
-Schema.ts --import type--> private annotation contract
-Schema.ts annotation callback --receives at invocation--> private constructor kit
-Arbitrary schema compiler --runtime imports--> SchemaAST + private kernel
+Schema.ts annotation callback --returns--> SchemaAST.Link
+Arbitrary schema compiler --runtime imports--> Schema + SchemaAST + private kernel
 ```
 
-Built-in callbacks refer only to their argument. `Schema.ts` does not statically import the native kernel, so ordinary
-Schema consumers do not load the kernel and the public module can still import Schema without a runtime cycle. This is
-an internal builder in the implementation sense, not an interface exposed to users; it may change freely with the
-unstable compiler.
-
-`~toArbitrary` must be added to the annotation-exclusion list used when emitting generic Schema annotations.
-Executable callbacks must never leak into JSON Schema or other representations. If `toCodecArbitrary` later passes its
-deletion test, it receives the same treatment.
+Callbacks use only Schema interfaces and do not import the native kernel. Ordinary Schema consumers therefore do not
+load Arbitrary internals. `toCodecArbitrary` is excluded when emitting generic Schema annotations so executable
+callbacks never leak into JSON Schema or other persisted representations.
 
 ### Schema Representation as a structural compiler candidate
 
@@ -316,12 +319,12 @@ Calling `toType` first means that `toRepresentation` selecting the last encoding
 transformations have already been intentionally lowered to their decoded `Type` domain. This makes Representation a
 real candidate for the structural part of the compiler.
 
-| What `Representation` simplifies                                       | What still needs an executable bridge                                                                       |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Suspend` cycles become a finite `references` graph                    | `SchemaAST.Filter.run` is replaced by metadata, so residual filters cannot execute                          |
-| sharing and identifiers become explicit `Reference` nodes              | a `Declaration` remains opaque where the compiler must select `~toArbitrary`, `toCodecJson`, or `toCodec`   |
-| Arrays, Objects, Unions, optionality, and mutability become plain data | codec expansion must retain the selected `SchemaAST.Link` so generated representation values can be decoded |
-| graph traversal no longer evaluates recursive TypeScript calls         | codec callbacks require the original type-parameter Schemas, not only their lowered Representation values   |
+| What `Representation` simplifies                                       | What still needs an executable bridge                                                                         |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Suspend` cycles become a finite `references` graph                    | `SchemaAST.Filter.run` is replaced by metadata, so residual filters cannot execute                            |
+| sharing and identifiers become explicit `Reference` nodes              | a `Declaration` remains opaque where the compiler must select `toCodecArbitrary`, `toCodecJson`, or `toCodec` |
+| Arrays, Objects, Unions, optionality, and mutability become plain data | codec expansion must retain the selected `SchemaAST.Link` so generated representation values can be decoded   |
+| graph traversal no longer evaluates recursive TypeScript calls         | codec callbacks require the original type-parameter Schemas, not only their lowered Representation values     |
 
 The first column is valuable. The second column is not solved by `toType`: it follows from Representation being an
 open model for persistence and code generation. Opaque declarations and checks are reconstructed with revivers.
@@ -413,10 +416,11 @@ discard accounting and `Exhausted` explicit and prevents impossible filters from
 
 ### Internal constraints
 
-The generation state carries private node-local constraints, size, Random, and recursive-component budgets. No such
-context appears in public annotations.
+The generation state carries private node-local constraints, size, Random, and recursive-component budgets. The public
+Schema annotation exposes only normalized, node-local semantic constraints to a Declaration's generation codec.
 
-During coexistence, the compiler can consume the semantic portion of the current filter arbitrary metadata:
+During coexistence, native semantic hints live in `Annotations.ToCodecArbitrary` and legacy fast-check metadata remains
+in `Annotations.ToArbitrary`. The native compiler consumes:
 
 - length/cardinality bounds;
 - integer, finite, NaN, and infinity flags;
@@ -424,9 +428,8 @@ During coexistence, the compiler can consume the semantic portion of the current
 - patterns;
 - uniqueness.
 
-It must not invoke legacy candidates whose callbacks accept the fast-check module. When the legacy implementation is
-removed, semantic generation hints can move out of the legacy `ToArbitrary` namespace without changing the unstable
-public module.
+It never invokes legacy candidates whose callbacks accept the fast-check module. The temporary duplication is removed
+with the legacy compiler; no shared collector is introduced for code that is intended to disappear.
 
 Recognized impossible constraints fail in `Arbitrary.schema`. Unknown predicates remain bounded runtime filters.
 
@@ -472,10 +475,10 @@ collect node checks
 Child nodes start with a reset node-local constraint context. Container constraints do not leak into elements or
 fields.
 
-For a Declaration, the selected codec target is compiled with the current node-local constraints. Root constructors
-consume only constraints meaningful to their own domain; ordered constraints already identify their `Order`. This lets
-canonical Array representations of Set, Map, and Chunk receive outer cardinality bounds without exposing options to the
-annotation callback. Original source checks still run after decoding.
+For a Declaration, `toCodecArbitrary` receives the normalized target constraint without its compiler-only `Order`.
+The callback translates the fields it recognizes into checks on its source Schema. Canonical `toCodecJson` and
+`toCodec` targets start with a reset constraint context because their domains may not match the declared target.
+Original target checks still run after decoding.
 
 ### Codec links and shrinking
 
@@ -493,9 +496,7 @@ For a selected `toCodecJson` or `toCodec` Link:
 Promoting descendants matters. Pruning an invalid shrink node together with its subtree can hide smaller valid values.
 The private effectful pull filter-map therefore flattens invalid nodes rather than terminating that branch.
 
-All selected codec Links use this identical behavior. If `toCodecArbitrary` is ever added, it must use the same
-decoding, discard, and shrinking semantics; it would differ only in precedence and in the author's intent to provide a
-productive representation.
+All selected codec Links use this identical decoding, discard, interruption, and shrinking behavior.
 
 Link transformations may be non-injective, so duplicate decoded shrink candidates are allowed initially. Dedupe is a
 performance optimization only if benchmarks demonstrate a problem.
@@ -521,7 +522,7 @@ Mutually recursive types share one SCC budget; crossing from `A` to `B` never re
 must partition or consume a shared allowance so total structure size remains bounded rather than growing
 exponentially.
 
-A trusted `~toArbitrary` carries private productivity information produced by its internal constructors. The annotation
+A `toCodecArbitrary` Link participates in the same graph and SCC analysis as every other Schema edge. The annotation
 does not receive or return `terminal`, recursion identifiers, or SCC state.
 
 ## Sampling, checking, interruption, and replay
@@ -599,71 +600,78 @@ The current source contains 25 explicit legacy arbitrary annotations, including 
 declarations. Three additional built-ins (`File`, `FormData`, and `URLSearchParams`) are codec-only today. Almost every
 Declaration already has a canonical codec. The table below classifies the intended native path before benchmark tuning.
 
-| Declaration            | Existing structural route  | Initial native route      | Reason                                                          |
-| ---------------------- | -------------------------- | ------------------------- | --------------------------------------------------------------- |
-| `Json` / `MutableJson` | self-canonical JSON        | `~toArbitrary`            | opaque recursive declaration; `toCodecJson` returns undefined   |
-| `Option`               | `toCodec`                  | `toCodec`                 | exact tagged union with a visible `None` base                   |
-| `Result`               | `toCodec`                  | `toCodec`                 | exact tagged union                                              |
-| `Redacted`             | `toCodecJson`              | `toCodecJson`             | maps the type-parameter representation directly                 |
-| `CauseReason`          | `toCodec`                  | `toCodec`                 | exact tagged union with an interrupt base                       |
-| `Cause`                | `toCodec`                  | `toCodec`                 | exact array representation                                      |
-| `ErrorInstance`        | `toCodecJson`              | `toCodecJson`             | structural JSON error; recursive cause reaches native Json      |
-| `Exit`                 | `toCodec`                  | `toCodec`                 | exact success/failure union                                     |
-| `ReadonlyMap`          | `toCodec` array of entries | `toCodec`, then benchmark | add a direct recipe only if constrained key uniqueness needs it |
-| `HashMap`              | `toCodec` array of entries | `toCodec`, then benchmark | add a direct recipe only if constrained key uniqueness needs it |
-| `ReadonlySet`          | `toCodec` array            | `toCodec`, then benchmark | duplicates may require private constructive generation          |
-| `HashSet`              | `toCodec` array            | `toCodec`, then benchmark | Effect equality may require private constructive generation     |
-| `Chunk`                | `toCodec` array            | `toCodec`                 | exact representation; cardinality maps to array length          |
-| `RegExp`               | `toCodecJson` struct       | `~toArbitrary`            | generic source/flags have a poor acceptance rate                |
-| `URL`                  | `toCodecJson` string       | `~toArbitrary`            | an unconstrained string almost never decodes                    |
-| `Date`                 | `toCodecJson` string       | `~toArbitrary`            | validity and ordered Date constraints need construction         |
-| `Duration`             | `toCodecJson` tagged union | `toCodecJson`             | exact constructive union                                        |
-| `BigDecimal`           | `toCodecJson` string       | `~toArbitrary`            | scale and ordered bounds need constructive generation           |
-| `File`                 | `toCodecJson` struct       | `~toArbitrary`            | use bytes directly instead of synthesizing Base64               |
-| `FormData`             | `toCodecJson` entry array  | `toCodecJson`             | structural and productive once File is handled                  |
-| `URLSearchParams`      | `toCodecJson` string       | `toCodecJson`             | every string constructs a value                                 |
-| `Uint8Array`           | `toCodecJson` Base64       | `~toArbitrary`            | direct byte generation gives constructive length and shrinking  |
-| `DateTimeUtc`          | `toCodecJson` string       | `~toArbitrary`            | valid strings are sparse; ordered constraints need support      |
-| `TimeZoneOffset`       | `toCodecJson` integer      | `toCodecJson`             | the canonical codec is already constructive                     |
-| `TimeZoneNamed`        | `toCodecJson` string       | `~toArbitrary`            | unconstrained strings almost never name an IANA zone            |
-| `TimeZone`             | `toCodecJson` string       | `~toArbitrary`            | generate the bounded-offset / useful-name union directly        |
-| `DateTimeZoned`        | `toCodecJson` string       | `~toArbitrary`            | valid strings are sparse; ordered constraints need support      |
-| Schema-backed `Class`  | `toCodec`                  | `toCodec`                 | direct structural class-field representation                    |
+| Declaration            | Existing structural route  | Initial native route      | Reason                                                            |
+| ---------------------- | -------------------------- | ------------------------- | ----------------------------------------------------------------- |
+| `Json` / `MutableJson` | self-canonical JSON        | `toCodecArbitrary`        | recursive structural representation; `toCodecJson` is opaque      |
+| `Option`               | `toCodec`                  | `toCodec`                 | exact tagged union with a visible `None` base                     |
+| `Result`               | `toCodec`                  | `toCodec`                 | exact tagged union                                                |
+| `Redacted`             | `toCodecJson`              | `toCodecJson`             | maps the type-parameter representation directly                   |
+| `CauseReason`          | `toCodec`                  | `toCodec`                 | exact tagged union with an interrupt base                         |
+| `Cause`                | `toCodec`                  | `toCodec`                 | exact array representation                                        |
+| `ErrorInstance`        | `toCodecJson`              | `toCodecJson`             | structural JSON error; recursive cause reaches native Json        |
+| `Exit`                 | `toCodec`                  | `toCodec`                 | exact success/failure union                                       |
+| `ReadonlyMap`          | `toCodec` array of entries | `toCodec`, then benchmark | add a direct recipe only if constrained key uniqueness needs it   |
+| `HashMap`              | `toCodec` array of entries | `toCodec`, then benchmark | add a direct recipe only if constrained key uniqueness needs it   |
+| `ReadonlySet`          | `toCodec` array            | `toCodec`, then benchmark | duplicates may require private constructive generation            |
+| `HashSet`              | `toCodec` array            | `toCodec`, then benchmark | Effect equality may require private constructive generation       |
+| `Chunk`                | `toCodec` array            | `toCodec`                 | exact representation; cardinality maps to array length            |
+| `RegExp`               | `toCodecJson` struct       | `toCodecArbitrary`        | constrained source catalog and independent flag fields            |
+| `URL`                  | `toCodecJson` string       | `toCodecArbitrary`        | structural HTTP(S) representation avoids sparse string decoding   |
+| `Date`                 | `toCodecJson` string       | `toCodecArbitrary`        | timestamp representation translates ordered Date constraints      |
+| `Duration`             | `toCodecJson` tagged union | `toCodecJson`             | exact constructive union                                          |
+| `BigDecimal`           | `toCodecJson` string       | `toCodecArbitrary`        | scale and ordered bounds need constructive generation             |
+| `File`                 | `toCodecJson` struct       | `toCodecArbitrary`        | use bytes directly instead of synthesizing Base64                 |
+| `FormData`             | `toCodecJson` entry array  | `toCodecJson`             | structural and productive once File is handled                    |
+| `URLSearchParams`      | `toCodecJson` string       | `toCodecJson`             | every string constructs a value                                   |
+| `Uint8Array`           | `toCodecJson` Base64       | `toCodecArbitrary`        | byte-array representation gives constructive length and shrinking |
+| `DateTimeUtc`          | `toCodecJson` string       | `toCodecArbitrary`        | valid strings are sparse; ordered constraints need support        |
+| `TimeZoneOffset`       | `toCodecJson` integer      | `toCodecJson`             | the canonical codec is already constructive                       |
+| `TimeZoneNamed`        | `toCodecJson` string       | `toCodecArbitrary`        | unconstrained strings almost never name an IANA zone              |
+| `TimeZone`             | `toCodecJson` string       | `toCodecArbitrary`        | generate the bounded-offset / useful-name union directly          |
+| `DateTimeZoned`        | `toCodecJson` string       | `toCodecArbitrary`        | valid strings are sparse; ordered constraints need support        |
+| Schema-backed `Class`  | `toCodec`                  | `toCodec`                 | direct structural class-field representation                      |
 
 This audit produces three conclusions:
 
 1. codec reuse removes most declaration-specific arbitrary recipes;
-2. `~toArbitrary` is still necessary for domains whose useful distributions or constraints are not represented by an
-   existing Schema;
-3. collection cardinality and uniqueness are the main pressure on how node-local constraints cross a Link.
+2. specialized domains are expressed as alternate Schema codecs rather than direct native Arbitrary implementations;
+3. collection cardinality and uniqueness are translated explicitly by `toCodecArbitrary` rather than crossing a Link
+   implicitly.
 
 The classification is a migration plan, not a requirement to add every annotation in the vertical slice. Each direct
 override must retain its place only if conformance or performance evidence justifies it.
 
 ### Measured parity snapshot
 
-The first parity audit exercised public native `check` with 100 runs, size 10, a fixed seed, and at most 5,000
-discards. It is a productivity diagnostic rather than a distribution-equivalence claim.
+The refreshed parity audit exercises public native `check` with 100 runs, size 10, a per-Schema deterministic seed,
+and at most 5,000 discards. It is a productivity diagnostic rather than a distribution-equivalence claim.
 
-All deterministic Schema AST families completed 100 valid runs with zero discards: `Any`, `Unknown`, `Void`, `Null`,
-`String`, `Number`, `Boolean`, `BigInt`, `Symbol`, `UniqueSymbol`, `ObjectKeyword`, literals, enums, template literals,
-unions, tuples, arrays, structs, string and symbol records, and structs with index-signature rest. `Never` remains an
-intentional immediate derivation error. Numeric template-literal segments initially exposed non-finite values; the
-compiler now supplies finite numeric constraints through union members. The audit also found and fixed `Symbol` being
-mistaken for unproductive recursion because its internal String dependency had bypassed the compiler graph.
+The legacy and native compilers cover the same 21 Schema AST tags:
 
-Canonical Declaration routes split into three measured groups:
+| Native status                  | AST tags                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| direct native generation       | `Null`, `Void`, `Undefined`, `Unknown`, `Any`, `String`, `Number`, `Boolean`, `BigInt`, `Symbol`, `Literal`, `UniqueSymbol`, `ObjectKeyword`, `Enum`, |
+|                                | `TemplateLiteral`, `Arrays`, `Objects`, `Union`, `Suspend`                                                                                            |
+| declaration-specific routing   | `Declaration`, through generation or canonical codec Links                                                                                            |
+| intentional empty-domain error | `Never`                                                                                                                                               |
 
-| Status                    | Declarations                                                                                   | Result for 100 runs                   |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------- |
-| constructive codec        | `Result`, `Redacted`, `ReadonlySet`, `HashSet`, `ReadonlyMap`, `HashMap`, `Chunk`, `Duration`, | passed with zero discards             |
-|                           | `Cause`, `Exit`, `TimeZoneOffset`                                                              |                                       |
-| valid but rejection-heavy | `Date`, `RegExp`, `BigDecimal`, `DateTimeUtc`, `Uint8Array`                                    | 4,296 / 2,056 / 1,514 / 4,069 / 1,431 |
-|                           |                                                                                                | discards respectively                 |
-| not productive at bound   | `URL`, `TimeZoneNamed`, `TimeZone`, `DateTimeZoned`                                            | exhausted after 5,001 discards        |
+All direct native AST families complete 100 valid runs with zero discards. `Never` remains an intentional immediate
+derivation error. The legacy compiler's 25 explicit Declaration annotations and the three codec-only built-ins split
+into four measured groups:
 
-The constructive group does not justify a private override. The rejection-heavy and exhausted groups are the concrete
-worklist for trusted `~toArbitrary` recipes. `File` and `FormData` remain unaudited in this first Node-only snapshot.
+| Status                         | Declarations                                                                                                                                              | Result for 100 runs            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| alternate generation codec     | `Json` / `MutableJson`, `RegExp`, `URL`, `Date`, `Uint8Array`                                                                                             | passed with zero discards      |
+| constructive canonical codec   | `Option`, `Result`, `Redacted`, `CauseReason`, `Cause`, `ErrorInstance`, `Exit`, `ReadonlyMap`, `HashMap`, `ReadonlySet`, `HashSet`, `Chunk`, `Duration`, | passed with zero discards      |
+|                                | `TimeZoneOffset`, Schema-backed `Class`, `File`, `FormData`, `URLSearchParams`                                                                            |                                |
+| productive through rejection   | `BigDecimal`                                                                                                                                              | passed with 228 discards       |
+| no productive route at the cap | `DateTimeUtc`, `TimeZoneNamed`, `TimeZone`, `DateTimeZoned`                                                                                               | exhausted after 5,001 discards |
+
+`File`, `FormData`, and `URLSearchParams` are the three codec-only built-ins; the other rows account for all 25 legacy
+annotations. The constructive codec group does not justify private overrides. The remaining parity batch is the whole
+sparse canonical-string family: `BigDecimal`, `DateTimeUtc`, `TimeZoneNamed`, `TimeZone`, and `DateTimeZoned`. It should
+be implemented and evaluated together rather than as independent micro-slices, because all five need native domain
+construction instead of generic String decoding and several carry ordered constraints.
 
 ## Production vertical slice
 
@@ -720,15 +728,12 @@ packages/effect/src/internal/arbitrary/schema.ts
 packages/effect/src/internal/arbitrary/runner.ts
   sampling, checking, shrinking, Random isolation, replay
 
-packages/effect/src/internal/arbitrary/annotation.ts
-  type-only private ~toArbitrary callback contract and key
-
 packages/effect/test/unstable/arbitrary/Arbitrary.test.ts
 packages/effect/typetest/unstable/arbitrary/Arbitrary.tst.ts
 ```
 
 The exact split may be compressed if the implementation remains clearer in fewer files. The important dependency rule
-is that the private annotation contract can be imported type-only by Schema without importing the kernel.
+is that Schema annotations return Links without importing the native Arbitrary kernel.
 
 ### Implementation sequence and gates
 
@@ -754,14 +759,13 @@ path.
 
 #### Slice 3: Declaration codecs and annotations
 
-- add private `~toArbitrary` key and type-only callback seam;
+- add the experimental `toCodecArbitrary` Schema Link callback;
 - implement the initial resolution order and missing-annotation error;
 - implement effectful decoding of representation sample trees with invalid-descendant promotion;
-- exercise `~toArbitrary` with native Json, `toCodecJson` with `URLSearchParams`, and `toCodec` with Option.
+- exercise `toCodecArbitrary` with recursive Json, `toCodecJson` with `URLSearchParams`, and `toCodec` with Option.
 
 Gate: each initial route produces valid values, decode failure is a bounded discard, shrink decoding can skip an
-invalid node and still reach a valid descendant, and core Schema has no runtime import of the kernel. Record any case
-that appears to need `toCodecArbitrary`; do not add it for a synthetic branch test.
+invalid node and still reach a valid descendant, and core Schema has no runtime import of the kernel.
 
 #### Slice 4: checking and replay
 
@@ -812,14 +816,14 @@ Measured on the implemented slice with the two materialized fixtures:
 
 | Fixture                    | Minified + gzip |
 | -------------------------- | --------------: |
-| fast-check v4 materialized |        78.91 KB |
-| native `Arbitrary.schema`  |        27.79 KB |
-| native minus fast-check    |       -51.12 KB |
+| fast-check v4 materialized |        78.95 KB |
+| native `Arbitrary.schema`  |        32.17 KB |
+| native minus fast-check    |       -46.78 KB |
 
-The native fixture is approximately 64.8% smaller. Kernel hardening added 1.83 KB to the initial 25.96 KB native
-measurement; the final numeric edge policy accounts for 0.96 KB and the stack-safety/interruption pass for 0.16 KB of
-that increase. Because the resulting fixture remains substantially smaller, no composition analysis was needed for
-this gate.
+The native fixture is approximately 59.3% smaller. Replacing the private constructor catalog with Schema Links reduced
+the native fixture by 0.29 KB compared with the preceding implementation; the materialized fast-check fixture remained
+effectively unchanged. Because the resulting fixture remains substantially smaller, no composition analysis was needed
+for this gate.
 
 ### Runtime performance baseline
 
@@ -978,6 +982,16 @@ throughput penalty: the new bounded case remained about 24% faster in this fixtu
 carrier can be efficient, not evidence of equal statistical distributions. The measurement is recorded in
 `tmp/runtimeperf/results/2026-08-13T16-07-58-139Z-636-a849a4-single-arbitrary.json`.
 
+Replacing specialized Declaration generators with Schema Links was then measured against the preceding native
+implementation. Ten of the eleven cases had no statistically significant change. `Uint8Array` sampling regressed from
+approximately 197 microseconds to 267 microseconds because the uniform Link constructs an `Array<number>` before
+decoding it to `Uint8Array`. The generic architecture is retained; a specialized byte generator is not reintroduced.
+The cost is tracked in the holistic performance follow-up together with other carrier and codec costs. Against
+fast-check v4, the same run measured native faster in nine of eleven scenarios, with the cold recursive case close and
+`Uint8Array` as the material exception. The comparison is recorded in
+`tmp/runtimeperf/results/2026-08-14T13-01-16-362Z-88309-a2a563-compare-arbitrary.json`, and the cross-engine run in
+`tmp/runtimeperf/results/2026-08-14T13-02-45-065Z-88648-78564e-single-arbitrary.json`.
+
 ## Test plan
 
 ### Kernel and runner
@@ -1008,7 +1022,8 @@ carrier can be efficient, not evidence of equal statistical distributions. The m
 - constraints do not leak to child nodes;
 - Option recursion discovers `None` through its codec as a base route;
 - each initial Declaration resolution branch has a focused test;
-- a custom user Declaration can derive through `toCodecJson` or `toCodec` but cannot provide typed `~toArbitrary`;
+- a custom user Declaration can provide a typed `toCodecArbitrary` Link with decoded type parameters and normalized
+  target constraints;
 - legacy and native annotations can coexist on the same declaration.
 
 ### Differential and parity work
@@ -1103,6 +1118,8 @@ complete, evaluate them together against correctness, counterexample quality, ru
 - [ ] add structured discard reasons and runner health diagnostics;
 - [ ] evaluate automatic persistence and reuse of concrete counterexamples;
 - [ ] review boundary-oriented distributions across the complete constructor catalog.
+- [ ] profile and optimize generic decoded-collection Links, including the measured `Array<number>` to `Uint8Array`
+      conversion, without adding a declaration-specific generator path.
 
 No `@effect/fast-check-v4` package or adapter is part of this plan.
 
@@ -1117,24 +1134,20 @@ until these domains pass parity tests.
 ### Constraint semantics through codecs
 
 Cardinality usually maps naturally from a collection Declaration to an Array codec target, while ordered domain
-constraints such as Date or BigDecimal do not. Tagged `Order` identity prevents primitive targets from accidentally
-consuming a different ordered domain; specialized `~toArbitrary` remains necessary where the representation cannot
-carry the constraint constructively.
+constraints such as Date or BigDecimal do not. The compiler uses tagged `Order` identity while merging raw filters,
+then the selected `toCodecArbitrary` callback translates normalized bounds into its source domain.
 
 ### Codec shrink quality
 
 Structural shrinking guarantees valid decoded candidates after filtering, not necessarily the most meaningful order in
-the decoded domain. Private `~toArbitrary` is the escalation path for Effect built-ins. A public alternate-codec
-annotation is added only if a real custom Declaration needs the same escape hatch and passes the deletion test.
+the decoded domain. A Declaration can choose a better structural representation through `toCodecArbitrary` without
+exposing a builder, shrink tree, or native Arbitrary implementation.
 
 ### Bundle size
 
-The private callback seam prevents core Schema from importing the kernel, but the compiler's central `Constructors`
-object currently retains every specialized built-in implementation whenever native Arbitrary is bundled. After adding
-URL and Date, the materialized Tree fixture measured 32.33 KB for native versus 78.92 KB for fast-check, and bundle
-analysis confirmed that the unused URL and Date implementations were present. The native bundle remains substantially
-smaller, but pay-for-use built-in tree-shaking is explicitly deferred until the catalog is complete. It is a final bundle
-gate before stabilization, not a reason to introduce a marker, registry, second AST, or larger private algebra now.
+Schema-owned generation Links prevent core Schema from importing the native kernel and remove the compiler's central
+`Constructors` object. Each built-in keeps its representation next to its Declaration, allowing ordinary module
+tree-shaking to remove unrelated recipes. Bundle comparison remains a final gate after every parity batch.
 
 ### Replay stability
 
@@ -1144,8 +1157,8 @@ regression artifact remains the materialized counterexample copied into an examp
 ### Property purity
 
 Properties must not mutate generated inputs. The runner intentionally provides neither defensive cloning nor deep
-freezing. This matches Effect's immutable-data conventions and avoids requiring clone semantics from private
-`~toArbitrary` annotations and codec-derived declarations. Mutation isolation can be reconsidered only as a separate
+freezing. This matches Effect's immutable-data conventions and avoids requiring clone semantics from codec-derived
+declarations. Mutation isolation can be reconsidered only as a separate
 feature with explicit semantics for identity, prototypes, aliases, mutable built-ins, and decode effects.
 
 ## Completion criteria for removing fast-check

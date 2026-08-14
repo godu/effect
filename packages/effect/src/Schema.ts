@@ -34,7 +34,6 @@ import { identity, memoize } from "./Function.ts"
 import * as Graph_ from "./Graph.ts"
 import * as HashMap_ from "./HashMap.ts"
 import * as HashSet_ from "./HashSet.ts"
-import type * as NativeArbitrary from "./internal/arbitrary/annotation.ts"
 import * as core from "./internal/core.ts"
 import * as InternalGraph from "./internal/graph.ts"
 import * as InternalRecord from "./internal/record.ts"
@@ -6705,6 +6704,11 @@ export function isTrimmed(annotations?: Annotations.Filter) {
           patterns: [{ source: TRIMMED_PATTERN, flags: "" }]
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          patterns: [{ source: TRIMMED_PATTERN, flags: "" }]
+        }
+      },
       ...annotations
     }
   )
@@ -7243,6 +7247,11 @@ export function isStartsWith(startsWith: string, annotations?: Annotations.Filte
           patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
+        }
+      },
       ...annotations
     }
   )
@@ -7293,6 +7302,11 @@ export function isEndsWith(endsWith: string, annotations?: Annotations.Filter) {
       toJsonSchema: () => ({ pattern: regExp.source }),
       toCode: () => ({ runtime: `Schema.isEndsWith(${format(endsWith)})` }),
       arbitrary: {
+        constraint: {
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
@@ -7348,6 +7362,11 @@ export function isIncludes(includes: string, annotations?: Annotations.Filter) {
       toJsonSchema: () => ({ pattern: regExp.source }),
       toCode: () => ({ runtime: `Schema.isIncludes(${format(includes)})` }),
       arbitrary: {
+        constraint: {
+          patterns: [{ source: regExp.source, flags: regExp.flags }]
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           patterns: [{ source: regExp.source, flags: regExp.flags }]
         }
@@ -7408,6 +7427,11 @@ export function isUppercased(annotations?: Annotations.Filter) {
           patterns: [{ source: UPPERCASED_PATTERN, flags: "" }]
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          patterns: [{ source: UPPERCASED_PATTERN, flags: "" }]
+        }
+      },
       ...annotations
     }
   )
@@ -7458,6 +7482,11 @@ export function isLowercased(annotations?: Annotations.Filter) {
       toJsonSchema: () => ({ pattern: regExp.source }),
       toCode: () => ({ runtime: "Schema.isLowercased()" }),
       arbitrary: {
+        constraint: {
+          patterns: [{ source: LOWERCASED_PATTERN, flags: "" }]
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           patterns: [{ source: LOWERCASED_PATTERN, flags: "" }]
         }
@@ -7516,6 +7545,11 @@ export function isCapitalized(annotations?: Annotations.Filter) {
           patterns: [{ source: CAPITALIZED_PATTERN, flags: "" }]
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          patterns: [{ source: CAPITALIZED_PATTERN, flags: "" }]
+        }
+      },
       ...annotations
     }
   )
@@ -7566,6 +7600,11 @@ export function isUncapitalized(annotations?: Annotations.Filter) {
       toJsonSchema: () => ({ pattern: regExp.source }),
       toCode: () => ({ runtime: "Schema.isUncapitalized()" }),
       arbitrary: {
+        constraint: {
+          patterns: [{ source: UNCAPITALIZED_PATTERN, flags: "" }]
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           patterns: [{ source: UNCAPITALIZED_PATTERN, flags: "" }]
         }
@@ -7677,6 +7716,13 @@ export function makeIsGreaterThan<T>(options: {
             }
           }
         },
+        toCodecArbitrary: {
+          constraint: {
+            order: options.order,
+            minimum: exclusiveMinimum,
+            exclusiveMinimum: true
+          }
+        },
         ...options.annotate?.(exclusiveMinimum),
         ...annotations
       }
@@ -7709,6 +7755,12 @@ export function makeIsGreaterThanOrEqualTo<T>(options: {
               order: options.order,
               minimum
             }
+          }
+        },
+        toCodecArbitrary: {
+          constraint: {
+            order: options.order,
+            minimum
           }
         },
         ...options.annotate?.(minimum),
@@ -7746,6 +7798,13 @@ export function makeIsLessThan<T>(options: {
             }
           }
         },
+        toCodecArbitrary: {
+          constraint: {
+            order: options.order,
+            maximum: exclusiveMaximum,
+            exclusiveMaximum: true
+          }
+        },
         ...options.annotate?.(exclusiveMaximum),
         ...annotations
       }
@@ -7778,6 +7837,12 @@ export function makeIsLessThanOrEqualTo<T>(options: {
               order: options.order,
               maximum
             }
+          }
+        },
+        toCodecArbitrary: {
+          constraint: {
+            order: options.order,
+            maximum
           }
         },
         ...options.annotate?.(maximum),
@@ -7834,6 +7899,15 @@ export function makeIsBetween<T>(deriveOptions: {
               ...(options.exclusiveMinimum && { exclusiveMinimum: true }),
               ...(options.exclusiveMaximum && { exclusiveMaximum: true })
             }
+          }
+        },
+        toCodecArbitrary: {
+          constraint: {
+            order: deriveOptions.order,
+            minimum: options.minimum,
+            maximum: options.maximum,
+            ...(options.exclusiveMinimum && { exclusiveMinimum: true }),
+            ...(options.exclusiveMaximum && { exclusiveMaximum: true })
           }
         },
         ...deriveOptions.annotate?.(options),
@@ -8237,6 +8311,11 @@ export function isInt(annotations?: Annotations.Filter) {
       arbitrary: {
         constraint: {
           integer: true
+        }
+      },
+      toCodecArbitrary: {
+        constraint: {
+          number: "integer"
         }
       },
       ...annotations
@@ -8823,6 +8902,11 @@ export function isMinLength(minLength: number, annotations?: Annotations.Filter)
           minLength
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          minLength
+        }
+      },
       ...annotations
     }
   )
@@ -8909,6 +8993,11 @@ export function isMaxLength(maxLength: number, annotations?: Annotations.Filter)
           maxLength
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          maxLength
+        }
+      },
       ...annotations
     }
   )
@@ -8980,6 +9069,12 @@ export function isLengthBetween(minimum: number, maximum: number, annotations?: 
           maxLength: maximum
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          minLength: minimum,
+          maxLength: maximum
+        }
+      },
       ...annotations
     }
   )
@@ -9044,6 +9139,11 @@ export function isMinSize(minSize: number, annotations?: Annotations.Filter) {
           minLength: minSize
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          minSize
+        }
+      },
       ...annotations
     }
   )
@@ -9105,6 +9205,11 @@ export function isMaxSize(maxSize: number, annotations?: Annotations.Filter) {
       arbitrary: {
         constraint: {
           maxLength: maxSize
+        }
+      },
+      toCodecArbitrary: {
+        constraint: {
+          maxSize
         }
       },
       ...annotations
@@ -9175,6 +9280,12 @@ export function isSizeBetween(minimum: number, maximum: number, annotations?: An
           maxLength: maximum
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          minSize: minimum,
+          maxSize: maximum
+        }
+      },
       ...annotations
     }
   )
@@ -9239,6 +9350,11 @@ export function isMinProperties(minProperties: number, annotations?: Annotations
           minLength: minProperties
         }
       },
+      toCodecArbitrary: {
+        constraint: {
+          minProperties
+        }
+      },
       ...annotations
     }
   )
@@ -9299,6 +9415,11 @@ export function isMaxProperties(maxProperties: number, annotations?: Annotations
       arbitrary: {
         constraint: {
           maxLength: maxProperties
+        }
+      },
+      toCodecArbitrary: {
+        constraint: {
+          maxProperties
         }
       },
       ...annotations
@@ -9367,6 +9488,12 @@ export function isPropertiesLengthBetween(minimum: number, maximum: number, anno
         constraint: {
           minLength: minimum,
           maxLength: maximum
+        }
+      },
+      toCodecArbitrary: {
+        constraint: {
+          minProperties: minimum,
+          maxProperties: maximum
         }
       },
       ...annotations
@@ -9491,6 +9618,11 @@ export function isUnique<T>(annotations?: Annotations.Filter) {
       toJsonSchema: () => ({ uniqueItems: true }),
       toCode: () => ({ runtime: "Schema.isUnique()" }),
       arbitrary: {
+        constraint: {
+          unique: true
+        }
+      },
+      toCodecArbitrary: {
         constraint: {
           unique: true
         }
@@ -11021,6 +11153,38 @@ function arrayFromItems<T>(
     : fc.uniqueArray(item, { ...constraints, comparator })
 }
 
+function withArrayArbitraryConstraints<S extends Constraint>(
+  schema: $Array<S>,
+  constraint: Annotations.ToCodecArbitrary.GenerationConstraint | undefined
+): $Array<S> {
+  let out = schema
+  if (constraint?.minLength !== undefined && constraint.maxLength !== undefined) {
+    out = out.check(isLengthBetween(constraint.minLength, constraint.maxLength))
+  } else if (constraint?.minLength !== undefined) {
+    out = out.check(isMinLength(constraint.minLength))
+  } else if (constraint?.maxLength !== undefined) {
+    out = out.check(isMaxLength(constraint.maxLength))
+  }
+  if (constraint?.unique === true) out = out.check(isUnique())
+  return out
+}
+
+function collectionArbitraryConstraint(
+  constraint: Annotations.ToCodecArbitrary.GenerationConstraint | undefined,
+  unique = false
+): Annotations.ToCodecArbitrary.GenerationConstraint | undefined {
+  if (constraint === undefined && !unique) return undefined
+  return {
+    ...(constraint?.minSize === undefined && constraint?.minLength === undefined
+      ? undefined
+      : { minLength: constraint.minSize ?? constraint?.minLength }),
+    ...(constraint?.maxSize === undefined && constraint?.maxLength === undefined
+      ? undefined
+      : { maxLength: constraint.maxSize ?? constraint?.maxLength }),
+    ...(unique ? { unique: true } as const : undefined)
+  }
+}
+
 function collectionArbitrary<T, Out>(
   fc: typeof FastCheck,
   ctx: Annotations.ToArbitrary.Context,
@@ -11125,6 +11289,17 @@ export function ReadonlyMap<Key extends Constraint, Value extends Constraint>(
           ArraySchema(Tuple([key, value])),
           SchemaTransformation.transform({
             decode: (e) => new globalThis.Map(e),
+            encode: (map) => [...map.entries()]
+          })
+        ),
+      toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
+        link<globalThis.Map<Key["Type"], Value["Type"]>>()(
+          withArrayArbitraryConstraints(
+            ArraySchema(Tuple([key, value])),
+            collectionArbitraryConstraint(constraint)
+          ),
+          SchemaTransformation.transform({
+            decode: (entries) => new globalThis.Map(entries),
             encode: (map) => [...map.entries()]
           })
         ),
@@ -11519,6 +11694,17 @@ export function HashMap<Key extends Constraint, Value extends Constraint>(key: K
             encode: HashMap_.toEntries
           })
         ),
+      toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
+        link<HashMap_.HashMap<Key["Type"], Value["Type"]>>()(
+          withArrayArbitraryConstraints(
+            ArraySchema(Tuple([key, value])),
+            collectionArbitraryConstraint(constraint)
+          ),
+          SchemaTransformation.transform({
+            decode: HashMap_.fromIterable,
+            encode: HashMap_.toEntries
+          })
+        ),
       toArbitrary: ([key, value]) => (fc, ctx) => entriesArbitrary(fc, ctx, key, value, HashMap_.fromIterable),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
       toFormatter: ([key, value]) => (t) => {
@@ -11628,6 +11814,17 @@ export function ReadonlySet<Value extends Constraint>(value: Value): $ReadonlySe
             encode: (set) => [...set.values()]
           })
         ),
+      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+        link<globalThis.Set<Value["Type"]>>()(
+          withArrayArbitraryConstraints(
+            ArraySchema(value),
+            collectionArbitraryConstraint(constraint, true)
+          ),
+          SchemaTransformation.transform({
+            decode: (values) => new globalThis.Set(values),
+            encode: (set) => [...set.values()]
+          })
+        ),
       toArbitrary: ([value]) => (fc, ctx) =>
         collectionArbitrary(fc, ctx, value.arbitrary, value.terminal, (as) => new globalThis.Set(as), Equal.equals),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
@@ -11733,6 +11930,17 @@ export function HashSet<Value extends Constraint>(value: Value): HashSet<Value> 
       toCodec: ([value]) =>
         link<HashSet_.HashSet<Value["Encoded"]>>()(
           ArraySchema(value),
+          SchemaTransformation.transform({
+            decode: HashSet_.fromIterable,
+            encode: Arr.fromIterable
+          })
+        ),
+      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+        link<HashSet_.HashSet<Value["Type"]>>()(
+          withArrayArbitraryConstraints(
+            ArraySchema(value),
+            collectionArbitraryConstraint(constraint, true)
+          ),
           SchemaTransformation.transform({
             decode: HashSet_.fromIterable,
             encode: Arr.fromIterable
@@ -11855,6 +12063,17 @@ export function Chunk<Value extends Constraint>(value: Value): Chunk<Value> {
             encode: Arr.fromIterable
           })
         ),
+      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+        link<Chunk_.Chunk<Value["Type"]>>()(
+          withArrayArbitraryConstraints(
+            ArraySchema(value),
+            collectionArbitraryConstraint(constraint)
+          ),
+          SchemaTransformation.transform({
+            decode: Chunk_.fromIterable,
+            encode: Arr.fromIterable
+          })
+        ),
       toArbitrary: ([value]) => (fc, ctx) =>
         collectionArbitrary(fc, ctx, value.arbitrary, value.terminal, Chunk_.fromIterable),
       toEquivalence: ([value]) => Chunk_.makeEquivalence(value),
@@ -11901,6 +12120,32 @@ export const ChunkReviver = InternalSchema.makeDeclarationReviver(
 export interface RegExp extends instanceOf<globalThis.RegExp> {
   readonly "Rebuild": RegExp
 }
+
+const RegExpArbitrarySources = [
+  "",
+  ".",
+  ".*",
+  "\\d+",
+  "\\w+",
+  "[a-z]+",
+  "[A-Z]+",
+  "[0-9]+",
+  "^[a-zA-Z0-9]+$",
+  "^\\d{4}-\\d{2}-\\d{2}$"
+] as const
+const RegExpArbitraryFlags = ["g", "i", "m", "s", "u", "y"] as const
+
+const RegExpArbitraryRepresentation = Struct({
+  source: Literals(RegExpArbitrarySources),
+  flags: Struct({
+    g: Boolean,
+    i: Boolean,
+    m: Boolean,
+    s: Boolean,
+    u: Boolean,
+    y: Boolean
+  })
+})
 
 /**
  * Schema for JavaScript `RegExp` objects.
@@ -11970,7 +12215,25 @@ export const RegExp: RegExp = instanceOf(
             .map((flags) => flags.join(""))
         )
         .map(([source, flags]) => new globalThis.RegExp(source, flags)),
-    "~toArbitrary": () => (constructors) => constructors.RegExp(),
+    toCodecArbitrary: () =>
+      link<globalThis.RegExp>()(
+        RegExpArbitraryRepresentation,
+        SchemaTransformation.transform({
+          decode: ({ flags, source }) =>
+            new globalThis.RegExp(source, RegExpArbitraryFlags.filter((flag) => flags[flag]).join("")),
+          encode: (regExp) => ({
+            source: regExp.source as typeof RegExpArbitrarySources[number],
+            flags: {
+              g: regExp.global,
+              i: regExp.ignoreCase,
+              m: regExp.multiline,
+              s: regExp.dotAll,
+              u: regExp.unicode,
+              y: regExp.sticky
+            }
+          })
+        })
+      ),
     toEquivalence: () => (a, b) => a.source === b.source && a.flags === b.flags
   }
 )
@@ -12004,6 +12267,13 @@ export interface URL extends instanceOf<globalThis.URL> {
 
 const URLString = String.annotate({ expected: "a string that will be decoded as a URL" })
 
+const URLArbitraryRepresentation = Struct({
+  protocol: Literals(["http", "https"]),
+  label: String.check(isPattern(/^[a-z0-9]+$/), isMinLength(1), isMaxLength(63)),
+  suffix: String.check(isPattern(/^[a-z]+$/), isMinLength(2), isMaxLength(10)),
+  path: ArraySchema(String.check(isPattern(/^[A-Za-z0-9._~%-]*$/), isMaxLength(16))).check(isMaxLength(4))
+})
+
 /**
  * Schema for JavaScript `URL` objects.
  *
@@ -12034,7 +12304,23 @@ export const URL: URL = instanceOf(
         SchemaTransformation.urlFromString
       ),
     toArbitrary: () => (fc) => fc.webUrl().map((s) => new globalThis.URL(s)),
-    "~toArbitrary": () => (constructors) => constructors.URL(),
+    toCodecArbitrary: () =>
+      link<globalThis.URL>()(
+        URLArbitraryRepresentation,
+        SchemaTransformation.transform({
+          decode: ({ label, path, protocol, suffix }) =>
+            new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`),
+          encode: (url) => {
+            const labels = url.hostname.split(".")
+            return {
+              protocol: url.protocol.slice(0, -1) as "http" | "https",
+              label: labels.slice(0, -1).join("."),
+              suffix: labels.at(-1) ?? "",
+              path: url.pathname.slice(1).split("/")
+            }
+          }
+        })
+      ),
     toEquivalence: () => (a, b) => a.toString() === b.toString()
   }
 )
@@ -12116,6 +12402,8 @@ function dateArbitraryConstraints<T = globalThis.Date>(
 }
 
 const DateString = String.annotate({ expected: "a string that will be decoded as a Date" })
+const minimumDateTimestamp = -8_640_000_000_000_000
+const maximumDateTimestamp = 8_640_000_000_000_000
 
 /**
  * Schema for valid JavaScript `Date` objects.
@@ -12167,7 +12455,24 @@ export const Date: Date = declare(
         ctx?.constraint?.ordered?.order === Order.Date ? ctx.constraint.ordered : undefined,
         { noInvalidDate: true }
       )),
-    "~toArbitrary": () => (constructors) => constructors.Date()
+    toCodecArbitrary: ({ constraint }) => {
+      const minimum = Math.max(
+        minimumDateTimestamp,
+        constraint?.minimum === undefined
+          ? minimumDateTimestamp
+          : constraint.minimum.getTime() + (constraint.exclusiveMinimum === true ? 1 : 0)
+      )
+      const maximum = Math.min(
+        maximumDateTimestamp,
+        constraint?.maximum === undefined
+          ? maximumDateTimestamp
+          : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
+      )
+      return link<globalThis.Date>()(
+        Int.check(isBetween({ minimum, maximum })),
+        SchemaTransformation.dateFromMillis
+      )
+    }
   }
 )
 
@@ -13515,6 +13820,8 @@ export interface Uint8Array extends instanceOf<globalThis.Uint8Array<ArrayBuffer
   readonly "Rebuild": Uint8Array
 }
 
+const Uint8 = Int.check(isBetween({ minimum: 0, maximum: 255 }))
+
 const Base64String = String.annotate({
   expected: "a base64 encoded string that will be decoded as Uint8Array",
   format: "byte",
@@ -13549,7 +13856,14 @@ export const Uint8Array: Uint8Array = instanceOf(globalThis.Uint8Array<ArrayBuff
       SchemaTransformation.uint8ArrayFromBase64String
     ),
   toArbitrary: () => (fc) => fc.uint8Array(),
-  "~toArbitrary": () => (constructors) => constructors.Uint8Array()
+  toCodecArbitrary: ({ constraint }) =>
+    link<globalThis.Uint8Array<ArrayBufferLike>>()(
+      withArrayArbitraryConstraints(ArraySchema(Uint8), constraint),
+      SchemaTransformation.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>({
+        decode: (values) => globalThis.Uint8Array.from(values),
+        encode: (value) => globalThis.Array.from(value)
+      })
+    )
 })
 
 /**
@@ -16203,6 +16517,16 @@ export interface JsonObject {
   readonly [x: string]: Json
 }
 
+let JsonArbitraryRepresentation: Codec<Json>
+JsonArbitraryRepresentation = Union([
+  Null,
+  Finite,
+  Boolean,
+  String,
+  ArraySchema(suspend(() => JsonArbitraryRepresentation)),
+  Record(String, suspend(() => JsonArbitraryRepresentation))
+]) as Codec<Json>
+
 /**
  * Schema that accepts and validates any immutable JSON-compatible value.
  *
@@ -16221,7 +16545,12 @@ export const Json: Codec<Json> = make(SchemaAST.annotate(SchemaAST.Json, {
   toCode: () => ({
     runtime: "Schema.Json",
     Type: "Schema.Json"
-  })
+  }),
+  toCodecArbitrary: () =>
+    link<Json>()(
+      JsonArbitraryRepresentation,
+      SchemaTransformation.passthrough()
+    )
 }))
 
 /**
@@ -16286,7 +16615,12 @@ export const MutableJson: Codec<MutableJson> = make(SchemaAST.annotate(SchemaAST
   toCode: () => ({
     runtime: "Schema.MutableJson",
     Type: "Schema.MutableJson"
-  })
+  }),
+  toCodecArbitrary: () =>
+    link<MutableJson>()(
+      JsonArbitraryRepresentation,
+      SchemaTransformation.passthrough<MutableJson, Json>({ strict: false })
+    )
 }))
 
 /**
@@ -16349,6 +16683,8 @@ export function resolveAnnotationsKey<S extends Constraint>(schema: S): Annotati
  *
  * @since 4.0.0
  */
+type AnnotationSchemaConstraint = Constraint
+
 export declare namespace Annotations {
   /**
    * This interface is used to define the annotations that can be attached to a
@@ -16560,8 +16896,20 @@ export declare namespace Annotations {
     readonly toCodecIso?:
       | ((typeParameters: TypeParameters.Type<TypeParameters>) => SchemaAST.Link)
       | undefined
-    /** @internal */
-    readonly "~toArbitrary"?: NativeArbitrary.ToArbitrary<T> | undefined
+    /**
+     * Provides an alternate codec representation optimized for arbitrary generation.
+     *
+     * **Details**
+     *
+     * The callback receives decoded type-parameter schemas and normalized constraints for the declaration. The returned
+     * Link is preferred over canonical codec annotations by the native arbitrary compiler. Generated representation
+     * values are decoded and checked against the declaration, so the Link may be partial.
+     *
+     * This annotation is experimental and may change while native arbitrary generation remains unstable.
+     *
+     * @since 4.0.0
+     */
+    readonly toCodecArbitrary?: ToCodecArbitrary.Declaration<T, TypeParameters> | undefined
     readonly toArbitrary?: ToArbitrary.Declaration<T, TypeParameters> | undefined
     readonly toEquivalence?: ToEquivalence.Declaration<T, TypeParameters> | undefined
     readonly toFormatter?: ToFormatter.Declaration<T, TypeParameters> | undefined
@@ -16630,6 +16978,12 @@ export declare namespace Annotations {
       | ToArbitrary.Filter
       | undefined
     /**
+     * Native arbitrary-generation hints for this filter.
+     *
+     * @since 4.0.0
+     */
+    readonly toCodecArbitrary?: ToCodecArbitrary.Filter | undefined
+    /**
      * Marks the filter as *structural*, meaning it applies to the shape or
      * structure of the container (e.g., array length, object keys) rather than
      * the contents.
@@ -16641,6 +16995,102 @@ export declare namespace Annotations {
      * Example: `minLength` on an array is a structural filter.
      */
     readonly "~structural"?: boolean | undefined
+  }
+
+  /**
+   * Types used by native arbitrary derivation to select generation codecs and communicate normalized constraints.
+   *
+   * @since 4.0.0
+   */
+  export namespace ToCodecArbitrary {
+    /**
+     * Regular-expression source and flags used for constructive string generation.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Pattern {
+      readonly source: string
+      readonly flags: string
+    }
+
+    /**
+     * Normalized generation constraints for a declaration or schema node.
+     *
+     * **Details**
+     *
+     * Missing fields are unconstrained. These values guide construction but do not replace Schema validation.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface GenerationConstraint<T = unknown> {
+      readonly minimum?: T | undefined
+      readonly exclusiveMinimum?: true | undefined
+      readonly maximum?: T | undefined
+      readonly exclusiveMaximum?: true | undefined
+      readonly minLength?: number | undefined
+      readonly maxLength?: number | undefined
+      readonly minSize?: number | undefined
+      readonly maxSize?: number | undefined
+      readonly minProperties?: number | undefined
+      readonly maxProperties?: number | undefined
+      readonly patterns?: readonly [Pattern, ...Array<Pattern>]
+      readonly number?: "finite" | "integer" | undefined
+      readonly unique?: true | undefined
+    }
+
+    /**
+     * Raw constraint contribution attached to a Schema filter.
+     *
+     * **Details**
+     *
+     * `order` identifies the domain while the compiler merges bounds. It is removed before normalized constraints reach
+     * a declaration callback.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Constraint<T = unknown> extends GenerationConstraint<T> {
+      readonly order?: Order.Order<T> | undefined
+    }
+
+    /**
+     * Native arbitrary-generation hints attached to a filter or filter group.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Filter {
+      readonly constraint?: Constraint<any> | undefined
+    }
+
+    /**
+     * Input provided to a declaration's native arbitrary codec callback.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface DeclarationInput<
+      T,
+      Parameters extends ReadonlyArray<AnnotationSchemaConstraint>
+    > {
+      readonly typeParameters: TypeParameters.Type<Parameters>
+      readonly constraint: GenerationConstraint<T> | undefined
+    }
+
+    /**
+     * Selects a Schema Link whose source representation is optimized for native arbitrary generation.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface Declaration<
+      T,
+      Parameters extends ReadonlyArray<AnnotationSchemaConstraint>
+    > {
+      (input: DeclarationInput<T, Parameters>): SchemaAST.Link
+    }
   }
 
   /**
