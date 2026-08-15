@@ -6519,6 +6519,13 @@ export function link<T>() {
   }
 }
 
+function linkToCodecArbitrary<T>() {
+  return <To extends Constraint>(
+    decodeFrom: To,
+    decode: SchemaGetter.Getter<T, NoInfer<To["Type"]>>
+  ): SchemaAST.Link => link<T>()(decodeFrom, { decode, encode: SchemaGetter.forbiddenEncoding })
+}
+
 // -----------------------------------------------------------------------------
 // Checks
 // -----------------------------------------------------------------------------
@@ -10950,15 +10957,12 @@ export function ReadonlyMap<Key extends Constraint, Value extends Constraint>(
           })
         ),
       toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
-        link<globalThis.Map<Key["Type"], Value["Type"]>>()(
+        linkToCodecArbitrary<globalThis.Map<Key["Type"], Value["Type"]>>()(
           withArrayArbitraryConstraints(
             ArraySchema(Tuple([key, value])),
             collectionArbitraryConstraint(constraint)
           ),
-          SchemaTransformation.transform({
-            decode: (entries) => new globalThis.Map(entries),
-            encode: (map) => [...map.entries()]
-          })
+          SchemaGetter.transform((entries) => new globalThis.Map(entries))
         ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
       toFormatter: ([key, value]) => (t) => {
@@ -11138,28 +11142,39 @@ function graphToEquivalence<N, E, T extends Graph_.Kind>(
   }
 }
 
-function graphToArbitrary<N, E, T extends Graph_.Kind>(
+type GraphArbitraryRepresentation<N, E> = null | {
+  readonly nodes: readonly [N, ...Array<N>]
+  readonly edges: ReadonlyArray<readonly [source: number, target: number, data: E]>
+}
+
+function graphToCodecArbitrary<N, E, T extends Graph_.Kind>(
   type: T,
-  node: Annotations.ToArbitrary.TypeParameter<N>,
-  edge: Annotations.ToArbitrary.TypeParameter<E>
+  node: Codec<N>,
+  edge: Codec<E>
 ) {
-  return (fc: typeof FastCheck, ctx: Annotations.ToArbitrary.Context) => {
-    const empty = InternalGraph.hydrate<N, E, T>({ type, nodes: [], edges: [] })
-    const terminal = fc.constant(empty)
-    const arbitrary = fc.array(node.arbitrary).chain((values) => {
-      const nodes = values.map((data, index) => ({ index, data }))
-      if (nodes.length === 0) return terminal
-      const endpoint = fc.integer({ min: 0, max: nodes.length - 1 })
-      return fc.array(fc.tuple(endpoint, endpoint, edge.arbitrary)).map((values) =>
-        InternalGraph.hydrate({
-          type,
-          nodes,
-          edges: values.map(([source, target, data], index) => ({ index, source, target, data }))
-        })
-      )
+  return linkToCodecArbitrary<Graph_.Graph<N, E, T>>()(
+    Union([
+      Null,
+      Struct({
+        nodes: NonEmptyArray(node),
+        edges: ArraySchema(Tuple([Natural, Natural, edge]))
+      })
+    ]),
+    SchemaGetter.transform<Graph_.Graph<N, E, T>, GraphArbitraryRepresentation<N, E>>((input) => {
+      if (input === null) return InternalGraph.hydrate({ type, nodes: [], edges: [] })
+      const nodes = input.nodes.map((data, index) => ({ index, data }))
+      return InternalGraph.hydrate({
+        type,
+        nodes,
+        edges: input.edges.map(([source, target, data], index) => ({
+          index,
+          source: source % nodes.length,
+          target: target % nodes.length,
+          data
+        }))
+      })
     })
-    return withRecursion(fc, ctx, terminal, arbitrary)
-  }
+  )
 }
 
 /**
@@ -11250,7 +11265,7 @@ export function Graph<T extends Graph_.Kind, Node extends Constraint, Edge exten
             encode: (graph, options) => graphEncode(graph, type, options)
           })
         ),
-      toArbitrary: ([node, edge]) => graphToArbitrary(type, node, edge),
+      toCodecArbitrary: ({ typeParameters: [node, edge] }) => graphToCodecArbitrary(type, node, edge),
       toEquivalence: ([node, edge]) => graphToEquivalence(node, edge),
       toFormatter: () => globalThis.String
     }
@@ -11351,15 +11366,12 @@ export function HashMap<Key extends Constraint, Value extends Constraint>(key: K
           })
         ),
       toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
-        link<HashMap_.HashMap<Key["Type"], Value["Type"]>>()(
+        linkToCodecArbitrary<HashMap_.HashMap<Key["Type"], Value["Type"]>>()(
           withArrayArbitraryConstraints(
             ArraySchema(Tuple([key, value])),
             collectionArbitraryConstraint(constraint)
           ),
-          SchemaTransformation.transform({
-            decode: HashMap_.fromIterable,
-            encode: HashMap_.toEntries
-          })
+          SchemaGetter.transform(HashMap_.fromIterable)
         ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
       toFormatter: ([key, value]) => (t) => {
@@ -11470,15 +11482,12 @@ export function ReadonlySet<Value extends Constraint>(value: Value): $ReadonlySe
           })
         ),
       toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
-        link<globalThis.Set<Value["Type"]>>()(
+        linkToCodecArbitrary<globalThis.Set<Value["Type"]>>()(
           withArrayArbitraryConstraints(
             ArraySchema(value),
             collectionArbitraryConstraint(constraint, true)
           ),
-          SchemaTransformation.transform({
-            decode: (values) => new globalThis.Set(values),
-            encode: (set) => [...set.values()]
-          })
+          SchemaGetter.transform((values) => new globalThis.Set(values))
         ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
       toFormatter: ([value]) => (t) => {
@@ -11589,15 +11598,12 @@ export function HashSet<Value extends Constraint>(value: Value): HashSet<Value> 
           })
         ),
       toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
-        link<HashSet_.HashSet<Value["Type"]>>()(
+        linkToCodecArbitrary<HashSet_.HashSet<Value["Type"]>>()(
           withArrayArbitraryConstraints(
             ArraySchema(value),
             collectionArbitraryConstraint(constraint, true)
           ),
-          SchemaTransformation.transform({
-            decode: HashSet_.fromIterable,
-            encode: Arr.fromIterable
-          })
+          SchemaGetter.transform(HashSet_.fromIterable)
         ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
       toFormatter: ([value]) => (t) => {
@@ -11715,15 +11721,12 @@ export function Chunk<Value extends Constraint>(value: Value): Chunk<Value> {
           })
         ),
       toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
-        link<Chunk_.Chunk<Value["Type"]>>()(
+        linkToCodecArbitrary<Chunk_.Chunk<Value["Type"]>>()(
           withArrayArbitraryConstraints(
             ArraySchema(value),
             collectionArbitraryConstraint(constraint)
           ),
-          SchemaTransformation.transform({
-            decode: Chunk_.fromIterable,
-            encode: Arr.fromIterable
-          })
+          SchemaGetter.transform(Chunk_.fromIterable)
         ),
       toEquivalence: ([value]) => Chunk_.makeEquivalence(value),
       toFormatter: ([value]) => (t) => {
@@ -11819,23 +11822,11 @@ export const RegExp: RegExp = instanceOf(
         })
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<globalThis.RegExp>()(
+      linkToCodecArbitrary<globalThis.RegExp>()(
         schemas.RegExp(constraint),
-        SchemaTransformation.transform({
-          decode: ({ flags, source }) =>
-            new globalThis.RegExp(source, RegExpArbitraryFlags.filter((flag) => flags[flag]).join("")),
-          encode: (regExp) => ({
-            source: regExp.source,
-            flags: {
-              g: regExp.global,
-              i: regExp.ignoreCase,
-              m: regExp.multiline,
-              s: regExp.dotAll,
-              u: regExp.unicode,
-              y: regExp.sticky
-            }
-          })
-        })
+        SchemaGetter.transform(({ flags, source }) =>
+          new globalThis.RegExp(source, RegExpArbitraryFlags.filter((flag) => flags[flag]).join(""))
+        )
       ),
     toEquivalence: () => (a, b) => a.source === b.source && a.flags === b.flags
   }
@@ -11900,21 +11891,11 @@ export const URL: URL = instanceOf(
         SchemaTransformation.urlFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<globalThis.URL>()(
+      linkToCodecArbitrary<globalThis.URL>()(
         schemas.URL(constraint),
-        SchemaTransformation.transform({
-          decode: ({ label, path, protocol, suffix }) =>
-            new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`),
-          encode: (url) => {
-            const labels = url.hostname.split(".")
-            return {
-              protocol: url.protocol.slice(0, -1) as "http" | "https",
-              label: labels.slice(0, -1).join("."),
-              suffix: labels.at(-1) ?? "",
-              path: url.pathname.slice(1).split("/")
-            }
-          }
-        })
+        SchemaGetter.transform(({ label, path, protocol, suffix }) =>
+          new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`)
+        )
       ),
     toEquivalence: () => (a, b) => a.toString() === b.toString()
   }
@@ -12020,9 +12001,9 @@ export const Date: Date = declare(
         SchemaTransformation.dateFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<globalThis.Date>()(
+      linkToCodecArbitrary<globalThis.Date>()(
         schemas.Date(constraint),
-        SchemaTransformation.dateFromMillis
+        SchemaGetter.Date<number>()
       )
   }
 )
@@ -12368,12 +12349,9 @@ export const BigDecimal: BigDecimal = declare(
         SchemaTransformation.bigDecimalFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<BigDecimal_.BigDecimal>()(
+      linkToCodecArbitrary<BigDecimal_.BigDecimal>()(
         schemas.BigDecimal(constraint),
-        SchemaTransformation.transform({
-          decode: ({ scale, value }) => BigDecimal_.make(value, scale),
-          encode: (value) => ({ value: value.value, scale: value.scale })
-        })
+        SchemaGetter.transform(({ scale, value }) => BigDecimal_.make(value, scale))
       ),
     toFormatter: () => (bd) => BigDecimal_.format(bd),
     toEquivalence: () => BigDecimal_.Equivalence
@@ -13314,12 +13292,11 @@ export const Uint8Array: Uint8Array = instanceOf(globalThis.Uint8Array<ArrayBuff
       SchemaTransformation.uint8ArrayFromBase64String
     ),
   toCodecArbitrary: ({ constraint, schemas }) =>
-    link<globalThis.Uint8Array<ArrayBufferLike>>()(
+    linkToCodecArbitrary<globalThis.Uint8Array<ArrayBufferLike>>()(
       schemas.Uint8Array(constraint),
-      SchemaTransformation.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>({
-        decode: (values) => globalThis.Uint8Array.from(values),
-        encode: (value) => globalThis.Array.from(value)
-      })
+      SchemaGetter.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>((values) =>
+        globalThis.Uint8Array.from(values)
+      )
     )
 })
 
@@ -13487,12 +13464,9 @@ export const DateTimeUtc: DateTimeUtc = declare(
         SchemaTransformation.dateTimeUtcFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<DateTime.Utc>()(
+      linkToCodecArbitrary<DateTime.Utc>()(
         schemas.DateTimeUtc(constraint),
-        SchemaTransformation.transform({
-          decode: DateTime.makeUnsafe,
-          encode: DateTime.toEpochMillis
-        })
+        SchemaGetter.transform(DateTime.makeUnsafe)
       ),
     toFormatter: () => (utc) => utc.toString(),
     toEquivalence: () => DateTime.Equivalence
@@ -13737,12 +13711,9 @@ export const TimeZoneNamed: TimeZoneNamed = declare(
         SchemaTransformation.timeZoneNamedFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<DateTime.TimeZone.Named>()(
+      linkToCodecArbitrary<DateTime.TimeZone.Named>()(
         schemas.TimeZoneNamed(constraint),
-        SchemaTransformation.transform({
-          decode: DateTime.zoneMakeNamedUnsafe,
-          encode: (value) => value.id
-        })
+        SchemaGetter.transform(DateTime.zoneMakeNamedUnsafe)
       ),
     toFormatter: () => (tz) => DateTime.zoneToString(tz),
     toEquivalence: () => (a, b) => a.id === b.id
@@ -13840,13 +13811,11 @@ export const TimeZone: TimeZone = declare(
         SchemaTransformation.timeZoneFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<DateTime.TimeZone>()(
+      linkToCodecArbitrary<DateTime.TimeZone>()(
         schemas.TimeZone(constraint),
-        SchemaTransformation.transform({
-          decode: (value) =>
-            typeof value === "number" ? DateTime.zoneMakeOffset(value) : DateTime.zoneMakeNamedUnsafe(value),
-          encode: (value) => value._tag === "Offset" ? value.offset : value.id
-        })
+        SchemaGetter.transform((value) =>
+          typeof value === "number" ? DateTime.zoneMakeOffset(value) : DateTime.zoneMakeNamedUnsafe(value)
+        )
       ),
     toFormatter: () => (tz) => DateTime.zoneToString(tz),
     toEquivalence: () => (a, b) => DateTime.zoneToString(a) === DateTime.zoneToString(b)
@@ -13946,15 +13915,11 @@ export const DateTimeZoned: DateTimeZoned = declare(
         SchemaTransformation.dateTimeZonedFromString
       ),
     toCodecArbitrary: ({ constraint, schemas }) =>
-      link<DateTime.Zoned>()(
+      linkToCodecArbitrary<DateTime.Zoned>()(
         schemas.DateTimeZoned(constraint),
-        SchemaTransformation.transform({
-          decode: ({ epochMilliseconds, timeZone }) => DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone }),
-          encode: (value) => ({
-            epochMilliseconds: value.epochMilliseconds,
-            timeZone: value.zone._tag === "Offset" ? value.zone.offset : value.zone.id
-          })
-        })
+        SchemaGetter.transform(({ epochMilliseconds, timeZone }) =>
+          DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone })
+        )
       ),
     toFormatter: () => (zoned) => DateTime.formatIsoZoned(zoned),
     toEquivalence: () => DateTime.Equivalence
@@ -15937,9 +15902,9 @@ export const Json: Codec<Json> = make(SchemaAST.annotate(SchemaAST.Json, {
   toCodecArbitrary: (
     { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<Json, readonly []>
   ) =>
-    link<Json>()(
+    linkToCodecArbitrary<Json>()(
       schemas.Json(constraint),
-      SchemaTransformation.passthrough()
+      SchemaGetter.passthrough()
     )
 }))
 
@@ -16009,9 +15974,9 @@ export const MutableJson: Codec<MutableJson> = make(SchemaAST.annotate(SchemaAST
   toCodecArbitrary: (
     { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<MutableJson, readonly []>
   ) =>
-    link<MutableJson>()(
+    linkToCodecArbitrary<MutableJson>()(
       schemas.Json(constraint),
-      SchemaTransformation.passthrough<MutableJson, Json>({ strict: false })
+      SchemaTransformation.passthrough<MutableJson, Json>({ strict: false }).decode
     )
 }))
 

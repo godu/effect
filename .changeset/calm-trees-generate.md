@@ -14,6 +14,8 @@ constraint-aware Schema factories for Effect-owned built-ins. JSON, RegExp, URL,
 byte-array, and collection declarations use these Links for constructive generation without exposing an arbitrary
 builder, registry, or second AST.
 
+Add `SchemaGetter.forbiddenEncoding`, a reusable getter for the encode side of decode-only Schema transformations.
+
 Remove the fast-check bridge from the `effect` package, including `Schema.toArbitrary`,
 `Schema.Annotations.ToArbitrary`, and `effect/testing/FastCheck`. The `effect` package no longer depends on fast-check.
 
