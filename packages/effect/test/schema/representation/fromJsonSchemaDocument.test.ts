@@ -501,12 +501,6 @@ describe("fromJsonSchemaDocument", () => {
                         },
                         "annotations": {
                           "expected": "a finite number",
-                          "arbitrary": {
-                            "constraint": {
-                              "noInfinity": true,
-                              "noNaN": true
-                            }
-                          },
                           "toCodecArbitrary": {
                             "constraint": {
                               "number": "finite"
@@ -697,12 +691,6 @@ describe("fromJsonSchemaDocument", () => {
                         },
                         "annotations": {
                           "expected": "a finite number",
-                          "arbitrary": {
-                            "constraint": {
-                              "noInfinity": true,
-                              "noNaN": true
-                            }
-                          },
                           "toCodecArbitrary": {
                             "constraint": {
                               "number": "finite"
@@ -806,11 +794,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -844,11 +827,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 1
@@ -882,13 +860,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a string matching the RegExp a*",
-                    "arbitrary": {
-                      "constraint": {
-                        "patterns": [
-                          { "source": "a*", "flags": "" }
-                        ]
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "patterns": [
@@ -927,13 +898,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a string matching the RegExp a*",
-                    "arbitrary": {
-                      "constraint": {
-                        "patterns": [
-                          { "source": "a*", "flags": "" }
-                        ]
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "patterns": [
@@ -972,12 +936,6 @@ describe("fromJsonSchemaDocument", () => {
                 },
                 "annotations": {
                   "expected": "a finite number",
-                  "arbitrary": {
-                    "constraint": {
-                      "noInfinity": true,
-                      "noNaN": true
-                    }
-                  },
                   "toCodecArbitrary": {
                     "constraint": {
                       "number": "finite"
@@ -1009,12 +967,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -1058,12 +1010,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -1107,12 +1053,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -1156,12 +1096,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -1205,12 +1139,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -1257,11 +1185,6 @@ describe("fromJsonSchemaDocument", () => {
                 },
                 "annotations": {
                   "expected": "an integer",
-                  "arbitrary": {
-                    "constraint": {
-                      "integer": true
-                    }
-                  },
                   "toCodecArbitrary": {
                     "constraint": {
                       "number": "integer"
@@ -1293,11 +1216,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -1341,11 +1259,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -1389,11 +1302,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -1437,11 +1345,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -1485,11 +1388,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -1613,11 +1511,6 @@ describe("fromJsonSchemaDocument", () => {
                 "annotations": {
                   "expected": "a value with a length of at most 1",
                   "~structural": true,
-                  "arbitrary": {
-                    "constraint": {
-                      "maxLength": 1
-                    }
-                  },
                   "toCodecArbitrary": {
                     "constraint": {
                       "maxLength": 1
@@ -1648,12 +1541,6 @@ describe("fromJsonSchemaDocument", () => {
                       },
                       "annotations": {
                         "expected": "a finite number",
-                        "arbitrary": {
-                          "constraint": {
-                            "noInfinity": true,
-                            "noNaN": true
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "number": "finite"
@@ -1710,11 +1597,6 @@ describe("fromJsonSchemaDocument", () => {
                 "annotations": {
                   "expected": "a value with a length of at most 2",
                   "~structural": true,
-                  "arbitrary": {
-                    "constraint": {
-                      "maxLength": 2
-                    }
-                  },
                   "toCodecArbitrary": {
                     "constraint": {
                       "maxLength": 2
@@ -1877,12 +1759,6 @@ describe("fromJsonSchemaDocument", () => {
                     },
                     "annotations": {
                       "expected": "a finite number",
-                      "arbitrary": {
-                        "constraint": {
-                          "noInfinity": true,
-                          "noNaN": true
-                        }
-                      },
                       "toCodecArbitrary": {
                         "constraint": {
                           "number": "finite"
@@ -1919,11 +1795,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -1972,11 +1843,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 1
@@ -2022,11 +1888,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an array with unique items",
-                    "arbitrary": {
-                      "constraint": {
-                        "unique": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "unique": true
@@ -2278,13 +2139,6 @@ describe("fromJsonSchemaDocument", () => {
                       },
                       "annotations": {
                         "expected": "a string matching the RegExp a*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              { "source": "a*", "flags": "" }
-                            ]
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "patterns": [
@@ -2345,13 +2199,6 @@ describe("fromJsonSchemaDocument", () => {
                       },
                       "annotations": {
                         "expected": "a string matching the RegExp a*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              { "source": "a*", "flags": "" }
-                            ]
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "patterns": [
@@ -2387,13 +2234,6 @@ describe("fromJsonSchemaDocument", () => {
                       },
                       "annotations": {
                         "expected": "a string matching the RegExp b*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              { "source": "b*", "flags": "" }
-                            ]
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "patterns": [
@@ -2420,12 +2260,6 @@ describe("fromJsonSchemaDocument", () => {
                       },
                       "annotations": {
                         "expected": "a finite number",
-                        "arbitrary": {
-                          "constraint": {
-                            "noInfinity": true,
-                            "noNaN": true
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "number": "finite"
@@ -2463,11 +2297,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with at least 1 entry",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minProperties": 1
@@ -2522,11 +2351,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with at most 1 entry",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxProperties": 1
@@ -2597,13 +2421,6 @@ describe("fromJsonSchemaDocument", () => {
                             },
                             "annotations": {
                               "expected": "a string matching the RegExp ^[A-Z]",
-                              "arbitrary": {
-                                "constraint": {
-                                  "patterns": [
-                                    { "source": "^[A-Z]", "flags": "" }
-                                  ]
-                                }
-                              },
                               "toCodecArbitrary": {
                                 "constraint": {
                                   "patterns": [
@@ -2747,13 +2564,6 @@ describe("fromJsonSchemaDocument", () => {
                             },
                             "annotations": {
                               "expected": "a string matching the RegExp ^[A-Z]",
-                              "arbitrary": {
-                                "constraint": {
-                                  "patterns": [
-                                    { "source": "^[A-Z]", "flags": "" }
-                                  ]
-                                }
-                              },
                               "toCodecArbitrary": {
                                 "constraint": {
                                   "patterns": [
@@ -2797,11 +2607,6 @@ describe("fromJsonSchemaDocument", () => {
                             "annotations": {
                               "expected": "a value with a length of at least 2",
                               "~structural": true,
-                              "arbitrary": {
-                                "constraint": {
-                                  "minLength": 2
-                                }
-                              },
                               "toCodecArbitrary": {
                                 "constraint": {
                                   "minLength": 2
@@ -3347,11 +3152,6 @@ describe("fromJsonSchemaDocument", () => {
               "annotations": {
                 "expected": "a value with a length of at least 1",
                 "~structural": true,
-                "arbitrary": {
-                  "constraint": {
-                    "minLength": 1
-                  }
-                },
                 "toCodecArbitrary": {
                   "constraint": {
                     "minLength": 1
@@ -3371,11 +3171,6 @@ describe("fromJsonSchemaDocument", () => {
               "annotations": {
                 "expected": "a value with a length of at most 2",
                 "~structural": true,
-                "arbitrary": {
-                  "constraint": {
-                    "maxLength": 2
-                  }
-                },
                 "toCodecArbitrary": {
                   "constraint": {
                     "maxLength": 2
@@ -3412,11 +3207,6 @@ describe("fromJsonSchemaDocument", () => {
               "annotations": {
                 "expected": "a value with a length of at least 1",
                 "~structural": true,
-                "arbitrary": {
-                  "constraint": {
-                    "minLength": 1
-                  }
-                },
                 "toCodecArbitrary": {
                   "constraint": {
                     "minLength": 1
@@ -3436,11 +3226,6 @@ describe("fromJsonSchemaDocument", () => {
               "annotations": {
                 "expected": "a value with a length of at most 2",
                 "~structural": true,
-                "arbitrary": {
-                  "constraint": {
-                    "maxLength": 2
-                  }
-                },
                 "toCodecArbitrary": {
                   "constraint": {
                     "maxLength": 2
@@ -3704,11 +3489,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -3749,11 +3529,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -3799,11 +3574,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -3872,11 +3642,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -3919,11 +3684,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 2",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 2
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 2
@@ -3943,11 +3703,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -3993,11 +3748,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 2",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 2
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 2
@@ -4017,11 +3767,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -4067,11 +3812,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 2",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 2
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 2
@@ -4091,11 +3831,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -4137,11 +3872,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -4161,11 +3891,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 2",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 2
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 2
@@ -4212,11 +3937,6 @@ describe("fromJsonSchemaDocument", () => {
                       "annotations": {
                         "expected": "a value with a length of at least 1",
                         "~structural": true,
-                        "arbitrary": {
-                          "constraint": {
-                            "minLength": 1
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "minLength": 1
@@ -4236,11 +3956,6 @@ describe("fromJsonSchemaDocument", () => {
                       "annotations": {
                         "expected": "a value with a length of at most 2",
                         "~structural": true,
-                        "arbitrary": {
-                          "constraint": {
-                            "maxLength": 2
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "maxLength": 2
@@ -4283,11 +3998,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -4307,11 +4017,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at most 2",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "maxLength": 2
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "maxLength": 2
@@ -4359,11 +4064,6 @@ describe("fromJsonSchemaDocument", () => {
                       "annotations": {
                         "expected": "a value with a length of at least 1",
                         "~structural": true,
-                        "arbitrary": {
-                          "constraint": {
-                            "minLength": 1
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "minLength": 1
@@ -4383,11 +4083,6 @@ describe("fromJsonSchemaDocument", () => {
                       "annotations": {
                         "expected": "a value with a length of at most 2",
                         "~structural": true,
-                        "arbitrary": {
-                          "constraint": {
-                            "maxLength": 2
-                          }
-                        },
                         "toCodecArbitrary": {
                           "constraint": {
                             "maxLength": 2
@@ -4550,12 +4245,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4593,12 +4282,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4615,11 +4298,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -4658,12 +4336,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4680,11 +4352,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -4748,11 +4415,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -4769,12 +4431,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4812,12 +4468,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4891,12 +4541,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "a finite number",
-                    "arbitrary": {
-                      "constraint": {
-                        "noInfinity": true,
-                        "noNaN": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "finite"
@@ -4947,11 +4591,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an integer",
-                    "arbitrary": {
-                      "constraint": {
-                        "integer": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "number": "integer"
@@ -5189,11 +4828,6 @@ describe("fromJsonSchemaDocument", () => {
                   },
                   "annotations": {
                     "expected": "an array with unique items",
-                    "arbitrary": {
-                      "constraint": {
-                        "unique": true
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "unique": true
@@ -5488,11 +5122,6 @@ describe("fromJsonSchemaDocument", () => {
                   "annotations": {
                     "expected": "a value with a length of at least 1",
                     "~structural": true,
-                    "arbitrary": {
-                      "constraint": {
-                        "minLength": 1
-                      }
-                    },
                     "toCodecArbitrary": {
                       "constraint": {
                         "minLength": 1
@@ -5679,11 +5308,6 @@ describe("fromJsonSchemaDocument", () => {
                 "annotations": {
                   "expected": "a value with a length of at least 1",
                   "~structural": true,
-                  "arbitrary": {
-                    "constraint": {
-                      "minLength": 1
-                    }
-                  },
                   "toCodecArbitrary": {
                     "constraint": {
                       "minLength": 1

@@ -9,7 +9,7 @@ import {
   throws
 } from "@effect/vitest/utils"
 import { BigDecimal, Equal, Option } from "effect"
-import { FastCheck as fc } from "effect/testing"
+import * as fc from "fast-check"
 
 const $ = BigDecimal.fromStringUnsafe
 

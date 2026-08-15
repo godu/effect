@@ -6,7 +6,6 @@ import type * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
 import type * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
-import type * as FC from "effect/testing/FastCheck"
 import type * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
 import * as V from "vitest"
 import * as internal from "./internal/internal.ts"
@@ -47,8 +46,8 @@ export namespace Vitest {
    * @since 4.0.0
    */
   export type Arbitraries =
-    | Array<Schema.Schema<any> | FC.Arbitrary<any>>
-    | { [K in string]: Schema.Schema<any> | FC.Arbitrary<any> }
+    | Array<Schema.Schema<any>>
+    | { [K in string]: Schema.Schema<any> }
 
   /**
    * @since 4.0.0
@@ -75,9 +74,7 @@ export namespace Vitest {
         R,
         [
           {
-            [K in keyof Arbs]: Arbs[K] extends FC.Arbitrary<infer T> ? T
-              : Arbs[K] extends Schema.Schema<infer T> ? T
-              : never
+            [K in keyof Arbs]: Arbs[K] extends Schema.Schema<infer T> ? T : never
           },
           V.TestContext
         ]
@@ -85,12 +82,6 @@ export namespace Vitest {
       timeout?:
         | number
         | V.TestOptions & {
-          fastCheck?: FC.Parameters<
-            {
-              [K in keyof Arbs]: Arbs[K] extends FC.Arbitrary<infer T> ? T : Arbs[K] extends Schema.Schema<infer T> ? T
-              : never
-            }
-          >
           arbitrary?: NativeArbitrary.CheckOptions
         }
     ) => void
@@ -123,20 +114,13 @@ export namespace Vitest {
       arbitraries: Arbs,
       self: (
         properties: {
-          [K in keyof Arbs]: Arbs[K] extends FC.Arbitrary<infer T> ? T : Arbs[K] extends Schema.Schema<infer T> ? T
-          : never
+          [K in keyof Arbs]: Arbs[K] extends Schema.Schema<infer T> ? T : never
         },
         ctx: V.TestContext
       ) => void,
       timeout?:
         | number
         | V.TestOptions & {
-          fastCheck?: FC.Parameters<
-            {
-              [K in keyof Arbs]: Arbs[K] extends FC.Arbitrary<infer T> ? T : Arbs[K] extends Schema.Schema<infer T> ? T
-              : never
-            }
-          >
           arbitrary?: NativeArbitrary.CheckOptions
         }
     ) => void

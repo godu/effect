@@ -17,7 +17,6 @@ import * as Chunk from "effect/Chunk"
 import * as DateTime from "effect/DateTime"
 import * as HashMap from "effect/HashMap"
 import * as HashSet from "effect/HashSet"
-import { FastCheck } from "effect/testing"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const makeSuspendChain = (count: number): Schema.Codec<unknown> => {
@@ -1105,15 +1104,6 @@ describe("Arbitrary", () => {
         const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), { count: 30, seed: "json", size: 5 })
 
         assert.isTrue(values.every(Schema.is(Schema.Json)))
-      }))
-
-    it.effect("coexists with the legacy fast-check annotation", () =>
-      Effect.gen(function*() {
-        const legacy = FastCheck.sample(Schema.toArbitrary(Schema.Json)(FastCheck), { numRuns: 10, seed: 1 })
-        const native = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), { count: 10, seed: 1 })
-
-        assert.isTrue(legacy.every(Schema.is(Schema.Json)))
-        assert.isTrue(native.every(Schema.is(Schema.Json)))
       }))
 
     it.effect("derives canonical declarations through their codec", () =>

@@ -1,7 +1,7 @@
 import { afterAll, assert, describe, expect, it, layer } from "@effect/vitest"
 import * as testAssert from "@effect/vitest/utils"
 import { Clock, Context, Duration, Effect, Fiber, Layer, Schema } from "effect"
-import { FastCheck, TestClock } from "effect/testing"
+import { TestClock } from "effect/testing"
 
 it.effect(
   "effect",
@@ -167,7 +167,7 @@ describe("layer", () => {
             expect(foo).toEqual("foo")
             return num === num
           }),
-        { fastCheck: { numRuns: 200 } }
+        { arbitrary: { runs: 200 } }
       )
 
       it.effect.prop(
@@ -221,7 +221,7 @@ describe("layer", () => {
 
 // property testing
 
-const realNumber = FastCheck.float({ noNaN: true, noDefaultInfinity: true })
+const realNumber = Schema.Finite
 
 it.prop(
   "schema with array",
@@ -235,18 +235,11 @@ it.prop(
   ({ text, count }) => typeof text === "string" && Number.isInteger(count)
 )
 
-it.prop(
-  "schema with fast-check options uses the legacy runner",
-  [Schema.Int],
-  ([value]) => Number.isInteger(value),
-  { fastCheck: { numRuns: 5, seed: 1 } }
-)
-
-it.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) => a + b === b + a)
+it.prop("symmetry", [realNumber, Schema.Int], ([a, b]) => a + b === b + a)
 
 it.prop(
   "symmetry with object",
-  { a: realNumber, b: FastCheck.integer() },
+  { a: realNumber, b: Schema.Int },
   ({ a, b }) => a + b === b + a
 )
 
@@ -271,19 +264,13 @@ it.effect.prop(
   { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-native" } }
 )
 
-it.effect.prop(
-  "mixed Schema and fast-check arbitrary uses the legacy runner",
-  [Schema.Int, FastCheck.integer()],
-  ([left, right]) => Effect.sync(() => assert.isTrue(Number.isInteger(left) && Number.isInteger(right)))
-)
-
-it.effect.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) =>
+it.effect.prop("symmetry", [realNumber, Schema.Int], ([a, b]) =>
   Effect.gen(function*() {
     yield* Effect.void
     assert.isTrue(a + b === b + a)
   }))
 
-it.effect.prop("symmetry with object", { a: realNumber, b: FastCheck.integer() }, ({ a, b }) =>
+it.effect.prop("symmetry with object", { a: realNumber, b: Schema.Int }, ({ a, b }) =>
   Effect.gen(function*() {
     yield* Effect.void
     assert.strictEqual(a + b, b + a)
@@ -291,7 +278,7 @@ it.effect.prop("symmetry with object", { a: realNumber, b: FastCheck.integer() }
 
 it.effect.prop(
   "should detect the substring",
-  { a: FastCheck.string(), b: FastCheck.string(), c: FastCheck.string() },
+  { a: Schema.String, b: Schema.String, c: Schema.String },
   ({ a, b, c }) =>
     Effect.gen(function*() {
       yield* Effect.scope

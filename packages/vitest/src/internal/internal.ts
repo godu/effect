@@ -9,12 +9,9 @@ import * as Exit from "effect/Exit"
 import { flow, pipe } from "effect/Function"
 import * as Inspectable from "effect/Inspectable"
 import * as Layer from "effect/Layer"
-import { isObject } from "effect/Predicate"
-import * as Rec from "effect/Record"
 import * as Schedule from "effect/Schedule"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
-import * as fc from "effect/testing/FastCheck"
 import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
 import * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
@@ -60,29 +57,20 @@ type PropertyTimeout =
   | number
   | V.TestOptions & {
     readonly arbitrary?: NativeArbitrary.CheckOptions | undefined
-    readonly fastCheck?: fc.Parameters<any> | undefined
   }
 
-type SchemaArbitraries =
+type Arbitraries =
   | Array<Schema.Schema<any>>
   | { [K in string]: Schema.Schema<any> }
-
-const isSchemaArbitraries = (
-  arbitraries: Vitest.Vitest.Arbitraries
-): arbitraries is SchemaArbitraries =>
-  (Array.isArray(arbitraries) ? arbitraries : Object.values(arbitraries)).every(Schema.isSchema)
 
 const propertyTestOptions = (
   timeout: PropertyTimeout | undefined
 ): Exclude<PropertyTimeout, number> | undefined => typeof timeout === "number" ? undefined : timeout
 
-const hasFastCheckOptions = (timeout: PropertyTimeout | undefined): boolean =>
-  propertyTestOptions(timeout)?.fastCheck !== undefined
-
 const nativeCheckOptions = (timeout: PropertyTimeout | undefined): NativeArbitrary.CheckOptions | undefined =>
   propertyTestOptions(timeout)?.arbitrary
 
-const makeNativeArbitrary = (arbitraries: SchemaArbitraries): NativeArbitrary.Arbitrary<any> =>
+const makeNativeArbitrary = (arbitraries: Arbitraries): NativeArbitrary.Arbitrary<any> =>
   NativeArbitrary.schema(
     Array.isArray(arbitraries)
       ? Schema.Tuple(arbitraries)
@@ -194,65 +182,20 @@ const makeTester = <R>(
     V.it.fails(name, testOptions(timeout), (ctx) => run(ctx, [ctx], self))
 
   const prop: Vitest.Vitest.Tester<R>["prop"] = (name, arbitraries, self, timeout) => {
-    if (isSchemaArbitraries(arbitraries) && !hasFastCheckOptions(timeout)) {
-      const arbitrary = makeNativeArbitrary(arbitraries)
-      return it(
-        name,
-        testOptions(timeout),
-        (ctx) =>
-          runNativeCheck(
-            ctx,
-            arbitrary,
-            (values) =>
-              Effect.mapEager(
-                mapEffect(Effect.suspend(() => self(values as any, ctx))),
-                (value) => (value as unknown) !== false
-              ),
-            nativeCheckOptions(timeout)
-          )
-      )
-    }
-
-    if (Array.isArray(arbitraries)) {
-      const arbs = arbitraries.map((arbitrary) => {
-        if (Schema.isSchema(arbitrary)) {
-          return Schema.toArbitrary(arbitrary)(fc)
-        }
-        return arbitrary as fc.Arbitrary<any>
-      })
-      return it(
-        name,
-        testOptions(timeout),
-        (ctx) =>
-          // @ts-ignore
-          fc.assert(
-            // @ts-ignore
-            fc.asyncProperty(...arbs, (...as) => run(ctx, [as as any, ctx], self)),
-            // @ts-ignore
-            isObject(timeout) ? timeout?.fastCheck : {}
-          )
-      )
-    }
-
-    const arbs = fc.record(
-      Object.keys(arbitraries).reduce(function(result, key) {
-        const arb: any = arbitraries[key]
-        Rec.assignProperty(result, key, Schema.isSchema(arb) ? Schema.toArbitrary(arb)(fc) : arb)
-        return result
-      }, {} as Record<string, fc.Arbitrary<any>>)
-    )
-
+    const arbitrary = makeNativeArbitrary(arbitraries)
     return it(
       name,
       testOptions(timeout),
       (ctx) =>
-        // @ts-ignore
-        fc.assert(
-          fc.asyncProperty(arbs, (...as) =>
-            // @ts-ignore
-            run(ctx, [as[0] as any, ctx], self)),
-          // @ts-ignore
-          isObject(timeout) ? timeout?.fastCheck : {}
+        runNativeCheck(
+          ctx,
+          arbitrary,
+          (values) =>
+            Effect.mapEager(
+              mapEffect(Effect.suspend(() => self(values as any, ctx))),
+              (value) => (value as unknown) !== false
+            ),
+          nativeCheckOptions(timeout)
         )
     )
   }
@@ -262,53 +205,17 @@ const makeTester = <R>(
 
 /** @internal */
 export const prop: Vitest.Vitest.Methods["prop"] = (name, arbitraries, self, timeout) => {
-  if (isSchemaArbitraries(arbitraries) && !hasFastCheckOptions(timeout)) {
-    const arbitrary = makeNativeArbitrary(arbitraries)
-    return V.it(
-      name,
-      testOptions(timeout),
-      (ctx) =>
-        runNativeCheck(
-          ctx,
-          arbitrary,
-          (values) => (self(values as any, ctx) as unknown) !== false,
-          nativeCheckOptions(timeout)
-        )
-    )
-  }
-
-  if (Array.isArray(arbitraries)) {
-    const arbs = arbitraries.map((arbitrary) => {
-      if (Schema.isSchema(arbitrary)) {
-        return Schema.toArbitrary(arbitrary)(fc)
-      }
-      return arbitrary
-    })
-    return V.it(
-      name,
-      testOptions(timeout),
-      // @ts-ignore
-      (ctx) => fc.assert(fc.property(...arbs, (...as) => self(as, ctx)), isObject(timeout) ? timeout?.fastCheck : {})
-    )
-  }
-
-  const arbs = fc.record(
-    Object.keys(arbitraries).reduce(function(result, key) {
-      const arb: any = arbitraries[key]
-      if (Schema.isSchema(arb)) {
-        Rec.assignProperty(result, key, Schema.toArbitrary(arb)(fc))
-        return result
-      }
-      Rec.assignProperty(result, key, arb)
-      return result
-    }, {} as Record<string, fc.Arbitrary<any>>)
-  )
-
+  const arbitrary = makeNativeArbitrary(arbitraries)
   return V.it(
     name,
     testOptions(timeout),
-    // @ts-ignore
-    (ctx) => fc.assert(fc.property(arbs, (as) => self(as, ctx)), isObject(timeout) ? timeout?.fastCheck : {})
+    (ctx) =>
+      runNativeCheck(
+        ctx,
+        arbitrary,
+        (values) => (self(values as any, ctx) as unknown) !== false,
+        nativeCheckOptions(timeout)
+      )
   )
 }
 

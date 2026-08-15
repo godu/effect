@@ -1,14 +1,14 @@
+import * as BigDecimal from "effect/BigDecimal"
+import * as DateTime from "effect/DateTime"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import * as FastCheck from "effect/testing/FastCheck"
+import * as FastCheck from "fast-check"
 import assert from "node:assert/strict"
+import type { Tree } from "./schema.ts"
 import {
   makeBigDecimalSchema,
-  makeConstrainedStringSchema,
   makeDateTimeUtcSchema,
   makeDateTimeZonedSchema,
-  makeRareFilterSchema,
-  makeTreeSchema,
-  makeUniqueArraySchema,
   validateNumbers,
   validateSchemaValues,
   validateStrings,
@@ -17,14 +17,57 @@ import {
 } from "./schema.ts"
 
 const seed = 42
+const namedTimeZones = ["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"] as const
+
+const scoreArbitrary = FastCheck.oneof(
+  FastCheck.constant(Option.none()),
+  FastCheck.integer({ min: 0, max: 100 }).map(Option.some)
+)
+
+const treeFields = (
+  score: FastCheck.Arbitrary<Option.Option<number>>,
+  children: FastCheck.Arbitrary<ReadonlyArray<Tree>>
+) => ({
+  label: FastCheck.string({ minLength: 2, maxLength: 12 }),
+  score,
+  children
+})
+
+const treeArbitrary = (maxDepth = 1) => {
+  const depthIdentifier = FastCheck.createDepthIdentifier()
+  const recursion = { maxDepth, depthIdentifier }
+  const recursive = FastCheck.letrec<{ readonly Tree: Tree }>((tie) => ({
+    Tree: FastCheck.oneof(
+      recursion,
+      FastCheck.record(treeFields(FastCheck.constant(Option.none()), FastCheck.constant([]))),
+      FastCheck.constant(null).chain(() =>
+        FastCheck.record(
+          treeFields(
+            FastCheck.oneof(recursion, FastCheck.constant(Option.none()), scoreArbitrary),
+            FastCheck.array(tie("Tree"), { maxLength: 3 })
+          )
+        )
+      )
+    )
+  })).Tree
+  return FastCheck.record(
+    treeFields(scoreArbitrary, FastCheck.array(recursive, { maxLength: 3 }))
+  )
+}
+
+const timeZoneArbitrary = () =>
+  FastCheck.oneof(
+    FastCheck.integer({ min: -12 * 60 * 60 * 1_000, max: 14 * 60 * 60 * 1_000 }).map(DateTime.zoneMakeOffset),
+    FastCheck.constantFrom(...namedTimeZones).map(DateTime.zoneMakeNamedUnsafe)
+  )
 
 export const coldRecursiveFirstSample = () => ({
-  run: () => FastCheck.sample(Schema.toArbitrary(makeTreeSchema())(FastCheck), { numRuns: 1, seed }),
+  run: () => FastCheck.sample(treeArbitrary(0), { numRuns: 1, seed }),
   validate: validateTrees(1, 2, 2)
 })
 
 export const recursiveSample32 = () => {
-  const arbitrary = Schema.toArbitrary(makeTreeSchema())(FastCheck)
+  const arbitrary = treeArbitrary()
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed }),
     validate: validateTrees(32, 90, 110)
@@ -32,7 +75,7 @@ export const recursiveSample32 = () => {
 }
 
 export const constrainedStringSample128 = () => {
-  const arbitrary = Schema.toArbitrary(makeConstrainedStringSchema())(FastCheck)
+  const arbitrary = FastCheck.string({ minLength: 32, maxLength: 32 })
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateStrings(128)
@@ -40,9 +83,7 @@ export const constrainedStringSample128 = () => {
 }
 
 export const boundedNumberSample128 = () => {
-  const arbitrary = Schema.toArbitrary(
-    Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 4 }))
-  )(FastCheck)
+  const arbitrary = FastCheck.double({ min: 2, max: 4, noNaN: true })
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateNumbers(128)
@@ -50,7 +91,7 @@ export const boundedNumberSample128 = () => {
 }
 
 export const uint8ArraySample128 = () => {
-  const arbitrary = Schema.toArbitrary(Schema.Uint8Array)(FastCheck)
+  const arbitrary = FastCheck.uint8Array({ maxLength: 10 })
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateUint8Arrays(128)
@@ -59,7 +100,12 @@ export const uint8ArraySample128 = () => {
 
 export const bigDecimalSample128 = () => {
   const schema = makeBigDecimalSchema()
-  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  const scale = 20
+  const factor = BigInt(10) ** BigInt(17)
+  const arbitrary = FastCheck.bigInt({
+    min: BigInt(1234) * factor + BigInt(1),
+    max: BigInt(1236) * factor - BigInt(1)
+  }).map((value) => BigDecimal.make(value, scale))
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateSchemaValues(schema, 128)
@@ -68,7 +114,7 @@ export const bigDecimalSample128 = () => {
 
 export const dateTimeUtcSample128 = () => {
   const schema = makeDateTimeUtcSchema()
-  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  const arbitrary = FastCheck.integer({ min: -1_000_000_000, max: 1_000_000_000 }).map(DateTime.makeUnsafe)
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateSchemaValues(schema, 128)
@@ -76,7 +122,7 @@ export const dateTimeUtcSample128 = () => {
 }
 
 export const timeZoneNamedSample128 = () => {
-  const arbitrary = Schema.toArbitrary(Schema.TimeZoneNamed)(FastCheck)
+  const arbitrary = FastCheck.constantFrom(...namedTimeZones).map(DateTime.zoneMakeNamedUnsafe)
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateSchemaValues(Schema.TimeZoneNamed, 128)
@@ -84,7 +130,7 @@ export const timeZoneNamedSample128 = () => {
 }
 
 export const timeZoneSample128 = () => {
-  const arbitrary = Schema.toArbitrary(Schema.TimeZone)(FastCheck)
+  const arbitrary = timeZoneArbitrary()
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateSchemaValues(Schema.TimeZone, 128)
@@ -93,7 +139,10 @@ export const timeZoneSample128 = () => {
 
 export const dateTimeZonedSample128 = () => {
   const schema = makeDateTimeZonedSchema()
-  const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+  const arbitrary = FastCheck.tuple(
+    FastCheck.integer({ min: -1_000_000_000, max: 1_000_000_000 }),
+    timeZoneArbitrary()
+  ).map(([epochMilliseconds, timeZone]) => DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone }))
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: validateSchemaValues(schema, 128)
@@ -101,7 +150,7 @@ export const dateTimeZonedSample128 = () => {
 }
 
 export const rareFilterSample32 = () => {
-  const arbitrary = Schema.toArbitrary(makeRareFilterSchema())(FastCheck)
+  const arbitrary = FastCheck.integer({ min: 0, max: 255 }).filter((value) => value % 16 === 0)
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed }),
     validate: (values: ReadonlyArray<number>) => {
@@ -112,7 +161,10 @@ export const rareFilterSample32 = () => {
 }
 
 export const uniqueArraySample32 = () => {
-  const arbitrary = Schema.toArbitrary(makeUniqueArraySchema())(FastCheck)
+  const arbitrary = FastCheck.uniqueArray(FastCheck.integer({ min: 0, max: 1_023 }), {
+    minLength: 32,
+    maxLength: 32
+  })
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed }),
     validate: (values: ReadonlyArray<ReadonlyArray<number>>) => {
@@ -123,7 +175,7 @@ export const uniqueArraySample32 = () => {
 }
 
 export const literalSample128 = () => {
-  const arbitrary = Schema.toArbitrary(Schema.Literal("value"))(FastCheck)
+  const arbitrary = FastCheck.constant("value")
   return {
     run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
     validate: (values: ReadonlyArray<unknown>) => {
@@ -134,7 +186,7 @@ export const literalSample128 = () => {
 }
 
 export const checkPass100 = () => {
-  const arbitrary = Schema.toArbitrary(Schema.Int)(FastCheck)
+  const arbitrary = FastCheck.integer()
   const property = FastCheck.property(arbitrary, () => true)
   return {
     run: () => FastCheck.check(property, { numRuns: 100, seed }),
@@ -149,16 +201,14 @@ export const checkPass100 = () => {
 export const testSchemaVerifyGeneration100 = () => ({
   run: () => {
     const schema = Schema.Int
-    const arbitrary = Schema.toArbitrary(schema)(FastCheck)
+    const arbitrary = FastCheck.integer()
     FastCheck.assert(FastCheck.property(arbitrary, Schema.is(schema)), { numRuns: 100, seed })
   },
   validate: (result: void) => assert.equal(result, undefined)
 })
 
 export const checkFalsifyAndShrink = () => {
-  const arbitrary = Schema.toArbitrary(
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
-  )(FastCheck)
+  const arbitrary = FastCheck.integer({ min: 1, max: 1_000 })
   const property = FastCheck.property(arbitrary, (value) => value < 0)
   return {
     run: () => FastCheck.check(property, { examples: [[1_000]], numRuns: 1, seed }),
@@ -171,9 +221,7 @@ export const checkFalsifyAndShrink = () => {
 }
 
 export const checkReplay = () => {
-  const arbitrary = Schema.toArbitrary(
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
-  )(FastCheck)
+  const arbitrary = FastCheck.integer({ min: 1, max: 1_000 })
   const property = FastCheck.property(arbitrary, (value) => value < 0)
   const initial = FastCheck.check(property, { examples: [[1_000]], numRuns: 1, seed })
   assert.equal(initial.failed, true)
