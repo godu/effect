@@ -1812,6 +1812,57 @@ describe("Arbitrary", () => {
         }
       }))
 
+    it.effect("shrinks bounded positive BigInts toward the minimum", () =>
+      Effect.gen(function*() {
+        const result = yield* Arbitrary.check(
+          Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 100n, maximum: 1_000n }))),
+          () => false,
+          { runs: 1, seed: 21 }
+        )
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.isTrue(result.initialInput > 100n)
+          assert.strictEqual(result.counterexample, 100n)
+        }
+      }))
+
+    it.effect("shrinks bounded BigInts to the local failure boundary", () =>
+      Effect.gen(function*() {
+        const result = yield* Arbitrary.check(
+          Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 100n, maximum: 1_000n }))),
+          (value) => value < 700n,
+          { runs: 1, seed: 21 }
+        )
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 775n)
+          assert.strictEqual(result.counterexample, 700n)
+        }
+      }))
+
+    it.effect("selects the closest-to-zero BigInt shrink target", () =>
+      Effect.gen(function*() {
+        const cases = [
+          { minimum: -1_000n, maximum: -100n, target: -100n },
+          { minimum: -1_000n, maximum: 1_000n, target: 0n }
+        ] as const
+        for (const { maximum, minimum, target } of cases) {
+          const result = yield* Arbitrary.check(
+            Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum, maximum }))),
+            () => false,
+            { runs: 1, seed: 21 }
+          )
+
+          assert.strictEqual(result._tag, "Falsified")
+          if (result._tag === "Falsified") {
+            assert.notStrictEqual(result.initialInput, target)
+            assert.strictEqual(result.counterexample, target)
+          }
+        }
+      }))
+
     it.effect("shrinks Numbers to the local representable failure boundary", () =>
       Effect.gen(function*() {
         const result = yield* Arbitrary.check(

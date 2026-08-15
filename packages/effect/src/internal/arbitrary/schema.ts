@@ -843,6 +843,76 @@ function numberSample(
   )
 }
 
+interface BigIntShrink {
+  readonly value: bigint
+  readonly context: bigint | undefined
+}
+
+function shrinkBigInt(current: bigint, target: bigint, tryTargetAsap: boolean): ReadonlyArray<BigIntShrink> {
+  const out: Array<BigIntShrink> = []
+  const realGap = current - target
+  let previous = tryTargetAsap ? undefined : target
+  if (realGap > BigInt(0)) {
+    for (
+      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
+      toRemove > BigInt(0);
+      toRemove /= BigInt(2)
+    ) {
+      const value = current - toRemove
+      out.push({ value, context: previous })
+      previous = value
+    }
+  } else {
+    for (
+      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
+      toRemove < BigInt(0);
+      toRemove /= BigInt(2)
+    ) {
+      const value = current - toRemove
+      out.push({ value, context: previous })
+      previous = value
+    }
+  }
+  return out
+}
+
+function bigIntSample(
+  value: bigint,
+  minimum: bigint | undefined,
+  maximum: bigint | undefined,
+  context?: bigint
+): Model.Sample<bigint> {
+  // The passing-value context and gap-halving sequence are adapted from fast-check v4.9.0's BigIntArbitrary and
+  // ShrinkBigInt (MIT). Retaining the closest passing candidate lets the runner converge on a local failure boundary.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/BigIntArbitrary.ts
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/ShrinkBigInt.ts
+  let candidates: ReadonlyArray<BigIntShrink>
+  if (context === undefined) {
+    const target = minimum !== undefined && minimum > BigInt(0)
+      ? minimum
+      : maximum !== undefined && maximum < BigInt(0)
+      ? maximum
+      : BigInt(0)
+    candidates = shrinkBigInt(value, target, true)
+  } else if (
+    value > BigInt(0) && value === context + BigInt(1) && (minimum === undefined || value > minimum) ||
+    value < BigInt(0) && value === context - BigInt(1) && (maximum === undefined || value < maximum)
+  ) {
+    candidates = [{ value: context, context: undefined }]
+  } else {
+    candidates = shrinkBigInt(value, context, false)
+  }
+  return Model.makeSample(
+    value,
+    candidates.length === 0
+      ? undefined
+      : Model.mapPull(
+        Model.pullFromArray(candidates),
+        (candidate) => bigIntSample(candidate.value, minimum, maximum, candidate.context)
+      )
+  )
+}
+
 /** @internal */
 export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<S["Type"]> {
   const rootAst = SchemaAST.toType(schema.ast)
@@ -1060,7 +1130,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             const value = randomBigInt(state)
             return Model.generated(
               state.shrinks
-                ? Model.sampleFromShrink(value, (value) => value === BigInt(0) ? [] : [BigInt(0)])
+                ? bigIntSample(value, minimum, maximum)
                 : Model.makeSample(value)
             )
           }
