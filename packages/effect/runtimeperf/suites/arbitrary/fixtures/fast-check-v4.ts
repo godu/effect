@@ -17,6 +17,7 @@ import {
 } from "./schema.ts"
 
 const seed = 42
+const recursiveSeed = 188
 const namedTimeZones = ["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"] as const
 
 const scoreArbitrary = FastCheck.oneof(
@@ -69,7 +70,7 @@ export const coldRecursiveFirstSample = () => ({
 export const recursiveSample32 = () => {
   const arbitrary = treeArbitrary()
   return {
-    run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed }),
+    run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed: recursiveSeed }),
     validate: validateTrees(32, 90, 110)
   }
 }

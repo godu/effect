@@ -1,4 +1,4 @@
-import * as BigDecimal from "../../BigDecimal.ts"
+import type * as BigDecimal from "../../BigDecimal.ts"
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
@@ -211,7 +211,7 @@ function bigIntSchema(minimum: bigint | undefined, maximum: bigint | undefined):
 }
 
 function bigDecimalValueAtScale(value: BigDecimal.BigDecimal, scale: number): bigint {
-  return BigDecimal.scale(value, scale).value
+  return value.value * globalThis.BigInt(10) ** globalThis.BigInt(scale - value.scale)
 }
 
 function bigDecimalMinimumAtScale(
@@ -219,9 +219,8 @@ function bigDecimalMinimumAtScale(
   scale: number,
   exclusive: boolean
 ): bigint {
-  return exclusive
-    ? bigDecimalValueAtScale(BigDecimal.floor(minimum, scale), scale) + globalThis.BigInt(1)
-    : bigDecimalValueAtScale(BigDecimal.ceil(minimum, scale), scale)
+  const value = bigDecimalValueAtScale(minimum, scale)
+  return exclusive ? value + globalThis.BigInt(1) : value
 }
 
 function bigDecimalMaximumAtScale(
@@ -229,9 +228,8 @@ function bigDecimalMaximumAtScale(
   scale: number,
   exclusive: boolean
 ): bigint {
-  return exclusive
-    ? bigDecimalValueAtScale(BigDecimal.ceil(maximum, scale), scale) - globalThis.BigInt(1)
-    : bigDecimalValueAtScale(BigDecimal.floor(maximum, scale), scale)
+  const value = bigDecimalValueAtScale(maximum, scale)
+  return exclusive ? value - globalThis.BigInt(1) : value
 }
 
 function bigDecimalSchema(
@@ -1577,7 +1575,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       }
     }
     const target = recur(SchemaAST.toType(link.to), path)
-    const decodeDeclaration = SchemaParser.decodeUnknownEffect(Schema.make(ast))
+    const decodeDeclaration = SchemaParser.run<unknown, never>(ast)
     const decode = (value: unknown): Effect.Effect<Option.Option<unknown>> => {
       const transformed = link.transformation._tag === "Transformation"
         ? link.transformation.decode.run(Option.some(value), SchemaAST.defaultParseOptions)

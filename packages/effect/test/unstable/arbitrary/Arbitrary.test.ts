@@ -244,6 +244,19 @@ describe("Arbitrary", () => {
 
         assert.isTrue(constrainedValues.every(Schema.is(constrained)))
 
+        const highScale = Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.make(-12_345n, 22),
+          maximum: BigDecimal.make(678_901n, 24)
+        }))
+        const highScaleValues = yield* Arbitrary.sample(Arbitrary.schema(highScale), {
+          count: 500,
+          maxDiscards: 0,
+          seed: "big-decimal-high-scale-constraints",
+          size: 10
+        })
+
+        assert.isTrue(highScaleValues.every(Schema.is(highScale)))
+
         const result = yield* Arbitrary.check(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
@@ -1237,7 +1250,7 @@ describe("Arbitrary", () => {
         const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
           runs: 1,
           maxDiscards: 0,
-          seed: 21
+          seed: 47
         })
 
         assert.strictEqual(result._tag, "Falsified")
@@ -1832,7 +1845,7 @@ describe("Arbitrary", () => {
         const result = yield* Arbitrary.check(
           Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 100n, maximum: 1_000n }))),
           (value) => value < 700n,
-          { runs: 1, seed: 21 }
+          { runs: 1, seed: 839 }
         )
 
         assert.strictEqual(result._tag, "Falsified")
@@ -1882,7 +1895,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const result = yield* Arbitrary.check(Arbitrary.schema(Schema.Number), () => false, {
           runs: 1,
-          seed: 42,
+          seed: 231,
           size: 10
         })
 
@@ -1971,7 +1984,7 @@ describe("Arbitrary", () => {
         const arbitrary = Arbitrary.schema(
           Schema.Array(Schema.Literal("value")).check(Schema.isMaxLength(3))
         )
-        const first = yield* Arbitrary.check(arbitrary, () => false, { runs: 1, seed: 43, size: 3 })
+        const first = yield* Arbitrary.check(arbitrary, () => false, { runs: 1, seed: 1, size: 3 })
         assert.strictEqual(first._tag, "Falsified")
         if (first._tag !== "Falsified") return
 

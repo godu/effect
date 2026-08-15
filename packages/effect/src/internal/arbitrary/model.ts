@@ -2,7 +2,6 @@ import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
 import * as Pull from "../../Pull.ts"
-import type * as Random from "../../Random.ts"
 
 /** @internal */
 export interface Sample<out A> {
@@ -31,11 +30,17 @@ export type Computation<A> = A | Effect.Effect<A>
 export type Generation<A> = Computation<Attempt<A>>
 
 /** @internal */
+export interface GenerationRandom {
+  readonly nextUint32: () => number
+  readonly nextDoubleUnsafe: () => number
+}
+
+/** @internal */
 export interface GenerationState {
   readonly size: number
   readonly shrinks: boolean
   readonly biasFactor: number
-  readonly random: typeof Random.Random.Service
+  readonly random: GenerationRandom
   readonly budget: {
     remaining: number
   }
@@ -261,7 +266,21 @@ export function makePlaceholder<A>(): Compiled<A> {
 
 /** @internal */
 export const randomIndex = (state: GenerationState, length: number): number =>
-  Math.floor(state.random.nextDoubleUnsafe() * length)
+  length === 1 ? 0 : randomUint32Below(state, length)
+
+const numberOfUint32Values = 0x100000000
+
+function randomUint32Below(state: GenerationState, rangeSize: number): number {
+  // Equal-size buckets plus rejection apply the same unbiased selection principle as pure-rand v8.4.1's
+  // uniformIntInternal (MIT), used by fast-check v4.9.0. Small discrete ranges consume one PRNG word instead of
+  // constructing a 53-bit double.
+  // https://github.com/dubzzz/pure-rand/blob/v8.4.1/src/distribution/uniformInt.ts
+  const bucketSize = Math.floor(numberOfUint32Values / rangeSize)
+  const maximumAccepted = bucketSize * rangeSize
+  let value = state.random.nextUint32()
+  while (value >= maximumAccepted) value = state.random.nextUint32()
+  return Math.floor(value / bucketSize)
+}
 
 /** @internal */
 export const randomInt = (state: GenerationState, minimum: number, maximum: number): number => {
@@ -269,11 +288,11 @@ export const randomInt = (state: GenerationState, minimum: number, maximum: numb
   maximum = Math.floor(maximum)
   if (minimum === maximum) return minimum
   const width = maximum - minimum + 1
+  if (width <= numberOfUint32Values) return minimum + randomUint32Below(state, width)
   const numberOfDoubleValues = 0x20000000000000
   if (width <= numberOfDoubleValues) {
     // Equal-size buckets plus rejection apply the same unbiased selection principle as pure-rand v8.4.1's uniformInt
-    // (MIT), used by fast-check v4.9.0. Keeping contiguous buckets also preserves the previous mapping for ordinary
-    // small ranges except for the rejected tail.
+    // (MIT), used by fast-check v4.9.0.
     // https://github.com/dubzzz/pure-rand/blob/v8.4.1/src/distribution/uniformInt.ts
     const bucketSize = Math.floor(numberOfDoubleValues / width)
     const maximumAccepted = bucketSize * width
@@ -303,12 +322,12 @@ export const randomBigInt = (state: GenerationState, minimum: bigint, maximum: b
   const leadingBits = (bitLength - 1) % 32 + 1
   const leadingRange = 2 ** leadingBits
   // Arbitrary-width rejection sampling follows the same principle as pure-rand v8.4.1's uniformBigInt (MIT), used by
-  // fast-check v4.9.0. This implementation draws unsigned words from Effect Random instead of pure-rand's generator.
+  // fast-check v4.9.0. This implementation draws unsigned words from the private attempt PRNG instead of pure-rand.
   // https://github.com/dubzzz/pure-rand/blob/v8.4.1/src/distribution/uniformBigInt.ts
   while (true) {
-    let value = BigInt(Math.floor(state.random.nextDoubleUnsafe() * leadingRange))
+    let value = BigInt(randomUint32Below(state, leadingRange))
     for (let remaining = bitLength - leadingBits; remaining > 0; remaining -= 32) {
-      const word = BigInt(Math.floor(state.random.nextDoubleUnsafe() * 0x100000000))
+      const word = BigInt(state.random.nextUint32())
       value = value << BigInt(32) | word
     }
     if (value < width) return minimum + value
@@ -466,13 +485,13 @@ export function makeRandomNumber(
 }
 
 /** @internal */
-export const randomBoolean = (state: GenerationState): boolean => state.random.nextDoubleUnsafe() > 0.5
+export const randomBoolean = (state: GenerationState): boolean => (state.random.nextUint32() & 1) === 1
 
 /** @internal */
 export function shuffle<A>(state: GenerationState, elements: Iterable<A>): Array<A> {
   const buffer = Array.from(elements)
   for (let index = buffer.length - 1; index >= 1; index--) {
-    const target = Math.min(index, Math.floor(state.random.nextDoubleUnsafe() * (index + 1)))
+    const target = randomUint32Below(state, index + 1)
     const value = buffer[index]!
     buffer[index] = buffer[target]!
     buffer[target] = value

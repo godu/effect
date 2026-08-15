@@ -103,7 +103,7 @@ function rotateLeft(value: number, shift: number): number {
   return (value << shift | value >>> (32 - shift)) >>> 0
 }
 
-function makeAttemptRandom(seed: SeedState, attempt: number): typeof Random.Random["Service"] {
+function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRandom {
   // This provides the same per-run isolation targeted by fast-check v4.9.0's jump-before-toss strategy (MIT), while
   // deriving the attempt state directly so replay can jump to it without executing preceding attempts.
   // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/runner/Tosser.ts
@@ -134,9 +134,7 @@ function makeAttemptRandom(seed: SeedState, attempt: number): typeof Random.Rand
     return (high * 0x4000000 + low) / 0x20000000000000
   }
   return {
-    nextIntUnsafe: () =>
-      Math.floor(nextDoubleUnsafe() * (Number.MAX_SAFE_INTEGER - Number.MIN_SAFE_INTEGER + 1)) +
-      Number.MIN_SAFE_INTEGER,
+    nextUint32,
     nextDoubleUnsafe
   }
 }

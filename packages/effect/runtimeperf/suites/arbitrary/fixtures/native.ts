@@ -19,6 +19,7 @@ import {
 } from "./schema.ts"
 
 const seed = 42
+const recursiveSeed = 188
 const size = 10
 
 export const coldRecursiveFirstSample = () => ({
@@ -31,7 +32,7 @@ export const coldRecursiveFirstSample = () => ({
 
 export const recursiveSample32 = () => {
   const arbitrary = Arbitrary.schema(makeTreeSchema())
-  const program = Arbitrary.sample(arbitrary, { count: 32, seed, size: 3 })
+  const program = Arbitrary.sample(arbitrary, { count: 32, seed: recursiveSeed, size: 3 })
   return {
     run: () => Effect.runSync(program),
     validate: validateTrees(32, 90, 110)
@@ -172,7 +173,7 @@ export const checkFalsifyAndShrink = () => {
   const arbitrary = Arbitrary.schema(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
-  const program = Arbitrary.check(arbitrary, (value) => value < 0, { runs: 1, seed: 139, size })
+  const program = Arbitrary.check(arbitrary, (value) => value < 0, { runs: 1, seed: 47, size })
   return {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {
@@ -190,7 +191,7 @@ export const checkReplay = () => {
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
   const property = (value: number) => value < 0
-  const initial = Effect.runSync(Arbitrary.check(arbitrary, property, { runs: 1, seed: 139, size }))
+  const initial = Effect.runSync(Arbitrary.check(arbitrary, property, { runs: 1, seed: 47, size }))
   assert.equal(initial._tag, "Falsified")
   if (initial._tag !== "Falsified") throw new Error("Expected the replay setup to falsify")
   const program = Arbitrary.check(arbitrary, property, { replay: initial.replay })

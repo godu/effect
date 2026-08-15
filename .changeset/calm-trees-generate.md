@@ -33,12 +33,12 @@ validate the same output domains, although their generation distributions are no
 
 | Scenario                      |  Native | fast-check bridge | Native / bridge |
 | ----------------------------- | ------: | ----------------: | --------------: |
-| 32 recursive samples          |  347 µs |            458 µs |           0.76x |
-| 128 constrained strings       |  129 µs |           1.07 ms |           0.12x |
-| 128 `Uint8Array` samples      |  150 µs |           97.0 µs |           1.55x |
-| Passing property, 100 runs    | 30.1 µs |           41.7 µs |           0.72x |
-| First failure plus one shrink | 1.41 µs |           9.45 µs |           0.15x |
-| Replay recorded failure       | 1.29 µs |           6.52 µs |           0.20x |
+| 32 recursive samples          |  173 µs |            146 µs |           1.18x |
+| 128 constrained strings       | 57.6 µs |            706 µs |           0.08x |
+| 128 `Uint8Array` samples      |  139 µs |           98.0 µs |           1.42x |
+| Passing property, 100 runs    | 28.4 µs |           42.2 µs |           0.67x |
+| First failure plus one shrink | 1.35 µs |           9.16 µs |           0.15x |
+| Replay recorded failure       | 1.23 µs |           6.27 µs |           0.20x |
 
 The cold recursive derivation result was statistically inconclusive and is not included in the table.
 
