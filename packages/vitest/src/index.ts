@@ -7,6 +7,7 @@ import type * as Layer from "effect/Layer"
 import type * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
 import type * as FC from "effect/testing/FastCheck"
+import type * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
 import * as V from "vitest"
 import * as internal from "./internal/internal.ts"
 
@@ -90,6 +91,7 @@ export namespace Vitest {
               : never
             }
           >
+          arbitrary?: NativeArbitrary.CheckOptions
         }
     ) => void
   }
@@ -135,6 +137,7 @@ export namespace Vitest {
               : never
             }
           >
+          arbitrary?: NativeArbitrary.CheckOptions
         }
     ) => void
   }

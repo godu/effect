@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import { flow, pipe } from "effect/Function"
+import * as Inspectable from "effect/Inspectable"
 import * as Layer from "effect/Layer"
 import { isObject } from "effect/Predicate"
 import * as Rec from "effect/Record"
@@ -16,6 +17,7 @@ import * as Scope from "effect/Scope"
 import * as fc from "effect/testing/FastCheck"
 import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
+import * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
 import * as V from "vitest"
 import type * as Vitest from "../index.ts"
 
@@ -53,6 +55,72 @@ const testOptions = (timeout?: number | V.TestOptions) => typeof timeout === "nu
 
 const hookTimeout = (timeout?: Duration.Input) =>
   timeout === undefined ? undefined : Duration.toMillis(Duration.fromInputUnsafe(timeout))
+
+type PropertyTimeout =
+  | number
+  | V.TestOptions & {
+    readonly arbitrary?: NativeArbitrary.CheckOptions | undefined
+    readonly fastCheck?: fc.Parameters<any> | undefined
+  }
+
+type SchemaArbitraries =
+  | Array<Schema.Schema<any>>
+  | { [K in string]: Schema.Schema<any> }
+
+const isSchemaArbitraries = (
+  arbitraries: Vitest.Vitest.Arbitraries
+): arbitraries is SchemaArbitraries =>
+  (Array.isArray(arbitraries) ? arbitraries : Object.values(arbitraries)).every(Schema.isSchema)
+
+const propertyTestOptions = (
+  timeout: PropertyTimeout | undefined
+): Exclude<PropertyTimeout, number> | undefined => typeof timeout === "number" ? undefined : timeout
+
+const hasFastCheckOptions = (timeout: PropertyTimeout | undefined): boolean =>
+  propertyTestOptions(timeout)?.fastCheck !== undefined
+
+const nativeCheckOptions = (timeout: PropertyTimeout | undefined): NativeArbitrary.CheckOptions | undefined =>
+  propertyTestOptions(timeout)?.arbitrary
+
+const makeNativeArbitrary = (arbitraries: SchemaArbitraries): NativeArbitrary.Arbitrary<any> =>
+  NativeArbitrary.schema(
+    Array.isArray(arbitraries)
+      ? Schema.Tuple(arbitraries)
+      : Schema.Struct(arbitraries)
+  )
+
+function formatNativeCheckFailure<A, E>(result: NativeArbitrary.CheckResult<A, E>): string | undefined {
+  switch (result._tag) {
+    case "Passed":
+      return undefined
+    case "Falsified":
+      return `Property falsified after ${result.runs} run(s) and ${result.shrinks} shrink(s)\n` +
+        `Counterexample: ${Inspectable.toStringUnknown(result.counterexample)}\n` +
+        `${
+          result.failure._tag === "ReturnedFalse"
+            ? "Failure: returned false"
+            : `Failure: ${Inspectable.toStringUnknown(result.failure.error)}`
+        }\n` +
+        `Replay: ${result.replay}`
+    case "Exhausted":
+      return `Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)`
+    case "ReplayMismatch":
+      return `Property replay failed: ${result.reason}`
+  }
+}
+
+const runNativeCheck = <A, E>(
+  ctx: V.TestContext,
+  arbitrary: NativeArbitrary.Arbitrary<A>,
+  property: (value: A) => boolean | Effect.Effect<boolean, E>,
+  options: NativeArbitrary.CheckOptions | undefined
+): Promise<void> =>
+  runTest(ctx)(
+    Effect.flatMapEager(NativeArbitrary.check(arbitrary, property, options), (result) => {
+      const failure = formatNativeCheckFailure(result)
+      return failure === undefined ? Effect.void : Effect.die(new Error(failure))
+    })
+  )
 
 const makeItProxy = <Methods extends object>(
   it: V.TestAPI,
@@ -126,6 +194,25 @@ const makeTester = <R>(
     V.it.fails(name, testOptions(timeout), (ctx) => run(ctx, [ctx], self))
 
   const prop: Vitest.Vitest.Tester<R>["prop"] = (name, arbitraries, self, timeout) => {
+    if (isSchemaArbitraries(arbitraries) && !hasFastCheckOptions(timeout)) {
+      const arbitrary = makeNativeArbitrary(arbitraries)
+      return it(
+        name,
+        testOptions(timeout),
+        (ctx) =>
+          runNativeCheck(
+            ctx,
+            arbitrary,
+            (values) =>
+              Effect.mapEager(
+                mapEffect(Effect.suspend(() => self(values as any, ctx))),
+                (value) => (value as unknown) !== false
+              ),
+            nativeCheckOptions(timeout)
+          )
+      )
+    }
+
     if (Array.isArray(arbitraries)) {
       const arbs = arbitraries.map((arbitrary) => {
         if (Schema.isSchema(arbitrary)) {
@@ -175,10 +262,25 @@ const makeTester = <R>(
 
 /** @internal */
 export const prop: Vitest.Vitest.Methods["prop"] = (name, arbitraries, self, timeout) => {
+  if (isSchemaArbitraries(arbitraries) && !hasFastCheckOptions(timeout)) {
+    const arbitrary = makeNativeArbitrary(arbitraries)
+    return V.it(
+      name,
+      testOptions(timeout),
+      (ctx) =>
+        runNativeCheck(
+          ctx,
+          arbitrary,
+          (values) => (self(values as any, ctx) as unknown) !== false,
+          nativeCheckOptions(timeout)
+        )
+    )
+  }
+
   if (Array.isArray(arbitraries)) {
     const arbs = arbitraries.map((arbitrary) => {
       if (Schema.isSchema(arbitrary)) {
-        throw new Error("Schemas are not supported yet")
+        return Schema.toArbitrary(arbitrary)(fc)
       }
       return arbitrary
     })
@@ -194,7 +296,8 @@ export const prop: Vitest.Vitest.Methods["prop"] = (name, arbitraries, self, tim
     Object.keys(arbitraries).reduce(function(result, key) {
       const arb: any = arbitraries[key]
       if (Schema.isSchema(arb)) {
-        throw new Error("Schemas are not supported yet")
+        Rec.assignProperty(result, key, Schema.toArbitrary(arb)(fc))
+        return result
       }
       Rec.assignProperty(result, key, arb)
       return result

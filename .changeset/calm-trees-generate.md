@@ -1,4 +1,5 @@
 ---
+"@effect/vitest": patch
 "effect": patch
 ---
 
@@ -19,3 +20,7 @@ complete regular-expression semantics.
 Migrate `TestSchema.Asserts.verifyLosslessTransformation` and `TestSchema.Asserts.arbitrary().verifyGeneration` to the
 native runner. Both methods now accept native check options directly, bound unsuccessful generation, and include the
 minimized counterexample and replay token in property failures.
+
+Use the native runner for `@effect/vitest` property tests whose inputs are all Schemas. Native check options are
+available through `arbitrary`; tests containing fast-check arbitraries, or explicitly providing `fastCheck` options,
+continue to use the existing fast-check runner during the migration.

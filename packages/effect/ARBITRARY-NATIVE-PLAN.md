@@ -1128,7 +1128,7 @@ duplicate regeneration caused by the approved item bias; distribution-aware atte
 2. implement or port constructive pattern generation and replace legacy candidate recipes with native semantic hints;
 3. extend the existing filter, unique-collection, and recursion benchmarks to constructive patterns and ordered
    domains as those generators are added;
-4. migrate `TestSchema` to the native runner, then migrate `@effect/vitest`;
+4. migrate `TestSchema` and the all-Schema `@effect/vitest` property paths to the native runner;
 5. compare bundle and runtime performance against the materialized fast-check path;
 6. remove legacy `toArbitrary`, `Schema.toArbitrary`, `effect/testing/FastCheck`, and the fast-check dependency only after
    downstream adoption and parity gates pass;
@@ -1139,6 +1139,11 @@ suite continues to exercise fast-check directly. In the end-to-end `Schema.Int` 
 values took 36.70 µs with the native path and 44.88 µs with fast-check v4; the bootstrap interval placed the fast-check
 cost 20.40% to 26.25% above native. The 31-fixture bundle comparison found no material regression: the materialized
 native and fast-check fixtures remain 34.41 KB and 78.96 KB respectively, and every ordinary fixture is unchanged.
+
+`@effect/vitest` now composes tuple and record inputs made entirely of Schemas and checks them through the native
+runner. Its pure, Effectful, live, and layered property helpers accept native check options through `arbitrary`.
+Supplying a fast-check arbitrary, mixing it with a Schema, or explicitly supplying `fastCheck` options retains the
+legacy path during coexistence.
 
 ## Holistic follow-up after parity
 

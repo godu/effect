@@ -1,5 +1,5 @@
 import { it, layer } from "@effect/vitest"
-import { Context, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { describe, expect, test } from "tstyche"
 
 class Foo extends Context.Service<Foo, "foo">()("Foo") {}
@@ -52,5 +52,32 @@ describe("layer", () => {
         memoMap: undefined as any
       })
     })
+  })
+})
+
+describe("property testing", () => {
+  test("infers Schema tuple values and accepts native options", () => {
+    it.effect.prop(
+      "schema tuple",
+      [Schema.String, Schema.Int],
+      ([text, count]) => {
+        expect(text).type.toBe<string>()
+        expect(count).type.toBe<number>()
+        return Effect.void
+      },
+      { arbitrary: { runs: 10, seed: "native" } }
+    )
+  })
+
+  test("infers Schema record values for the pure property helper", () => {
+    it.prop(
+      "schema record",
+      { text: Schema.String, count: Schema.Int },
+      ({ text, count }) => {
+        expect(text).type.toBe<string>()
+        expect(count).type.toBe<number>()
+      },
+      { arbitrary: { runs: 10 } }
+    )
   })
 })

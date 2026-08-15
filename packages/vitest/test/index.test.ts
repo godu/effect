@@ -169,6 +169,18 @@ describe("layer", () => {
           }),
         { fastCheck: { numRuns: 200 } }
       )
+
+      it.effect.prop(
+        "adds context with a native Schema property",
+        [Schema.Int],
+        ([value]) =>
+          Effect.gen(function*() {
+            const foo = yield* Foo
+            assert.strictEqual(foo, "foo")
+            assert.isTrue(Number.isInteger(value))
+          }),
+        { arbitrary: { runs: 5, seed: "vitest-native-layer" } }
+      )
     })
   })
 
@@ -211,6 +223,25 @@ describe("layer", () => {
 
 const realNumber = FastCheck.float({ noNaN: true, noDefaultInfinity: true })
 
+it.prop(
+  "schema with array",
+  [Schema.String, Schema.Int],
+  ([text, count]) => typeof text === "string" && Number.isInteger(count)
+)
+
+it.prop(
+  "schema with object",
+  { text: Schema.String, count: Schema.Int },
+  ({ text, count }) => typeof text === "string" && Number.isInteger(count)
+)
+
+it.prop(
+  "schema with fast-check options uses the legacy runner",
+  [Schema.Int],
+  ([value]) => Number.isInteger(value),
+  { fastCheck: { numRuns: 5, seed: 1 } }
+)
+
 it.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) => a + b === b + a)
 
 it.prop(
@@ -223,6 +254,27 @@ it.live.prop(
   "schema with object",
   { value: Schema.Int },
   ({ value }) => Effect.sync(() => assert.isTrue(Number.isInteger(value)))
+)
+
+let nativeEffectRuns = 0
+afterAll(() => assert.strictEqual(nativeEffectRuns, 5))
+
+it.effect.prop(
+  "schema with native options",
+  [Schema.String, Schema.Int],
+  ([text, count]) =>
+    Effect.sync(() => {
+      nativeEffectRuns++
+      assert.strictEqual(typeof text, "string")
+      assert.isTrue(Number.isInteger(count))
+    }),
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-native" } }
+)
+
+it.effect.prop(
+  "mixed Schema and fast-check arbitrary uses the legacy runner",
+  [Schema.Int, FastCheck.integer()],
+  ([left, right]) => Effect.sync(() => assert.isTrue(Number.isInteger(left) && Number.isInteger(right)))
 )
 
 it.effect.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) =>
