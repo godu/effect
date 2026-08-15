@@ -8,6 +8,7 @@ import * as Order from "../../Order.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
 import * as SchemaParser from "../../SchemaParser.ts"
+import { effectIsExit } from "../effect.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
 import * as Model from "./model.ts"
@@ -26,8 +27,10 @@ const infinity = Number.POSITIVE_INFINITY
 const finiteNumberConstraint: Constraint = { number: "finite" }
 const optionMatch = { onFailure: Option.none, onSuccess: Option.some }
 
-const optionEager = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<Option.Option<A>, never, R> =>
-  Effect.matchEager(self, optionMatch) as Effect.Effect<Option.Option<A>, never, R>
+const optionComputation = <A, E, R>(self: Effect.Effect<A, E, R>): Model.Computation<Option.Option<A>> => {
+  const result = Effect.matchEager(self, optionMatch) as Effect.Effect<Option.Option<A>>
+  return effectIsExit(result) && result._tag === "Success" ? result.value : result
+}
 
 function arbitraryError(what: string, path: ReadonlyArray<PropertyKey>) {
   return errorWithPath(`Unable to derive an arbitrary for ${what}`, path)
@@ -1758,14 +1761,14 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     }
     const target = recur(SchemaAST.toType(link.to), path)
     const decodeDeclaration = SchemaParser.run<unknown, never>(ast)
-    const decode = (value: unknown): Effect.Effect<Option.Option<unknown>> => {
+    const decode = (value: unknown): Model.Computation<Option.Option<unknown>> => {
       const transformed = link.transformation._tag === "Transformation"
         ? link.transformation.decode.run(Option.some(value), SchemaAST.defaultParseOptions)
         : link.transformation.decode(Effect.succeed(Option.some(value)), SchemaAST.defaultParseOptions)
-      return Effect.flatMapEager(optionEager(transformed), (outer) => {
-        if (Option.isNone(outer) || Option.isNone(outer.value)) return Effect.succeedNone
-        return optionEager(decodeDeclaration(outer.value.value))
-      }) as Effect.Effect<Option.Option<unknown>>
+      return Model.flatMapComputation(optionComputation(transformed), (outer) => {
+        if (Option.isNone(outer) || Option.isNone(outer.value)) return Option.none()
+        return optionComputation(decodeDeclaration(outer.value.value))
+      })
     }
     return Model.makeCompiled(
       [target, ...typeParameters],
@@ -1773,7 +1776,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       (state) =>
         Model.flatMapGeneration(target.generate(state), (attempt) => {
           if (attempt._tag === "Discarded") return Model.discarded
-          return Effect.mapEager(
+          return Model.mapComputation(
             Model.filterMapSample(attempt, decode),
             (sample) => Option.isSome(sample) ? sample.value : Model.discarded
           )

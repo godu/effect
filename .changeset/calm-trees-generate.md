@@ -24,6 +24,10 @@ minimized counterexample and replay token in property failures.
 Use the native runner for all `@effect/vitest` property tests. Property inputs are now Schemas, and native check options
 are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are no longer supported.
 
+Optimize `BigDecimal.Order` and `BigDecimal.Equivalence` with a shared hybrid comparator. Ordinary scale differences
+use cached, bounded coefficient alignment, while large differences are compared without materializing their decimal
+zeroes. `BigDecimal.make` now rejects scales that are not safe integers.
+
 Before its removal, the materialized fast-check bridge fixture
 `schema-toArbitrary-materialized-fast-check.ts` measured 79.00 KB minified and gzipped.
 
@@ -33,22 +37,22 @@ same output domains, although their generation distributions are not identical.
 
 | Scenario                       |  Native | fast-check | Native / fast-check |
 | ------------------------------ | ------: | ---------: | ------------------: |
-| 32 recursive samples           |  126 µs |     154 µs |               0.82x |
-| 128 constrained strings        | 51.4 µs |     760 µs |               0.07x |
-| 128 bounded numbers            | 22.1 µs |    69.3 µs |               0.32x |
-| 128 `Uint8Array` samples       | 80.8 µs |    99.8 µs |               0.81x |
-| 128 `BigDecimal` samples       | 85.6 µs |    66.4 µs |               1.29x |
-| 128 `DateTime.Utc` samples     | 59.3 µs |    73.2 µs |               0.81x |
-| 128 named time zones           | 29.6 µs |    51.9 µs |               0.57x |
-| 128 time zones                 | 35.6 µs |    63.4 µs |               0.56x |
-| 128 zoned date-times           |  121 µs |     132 µs |               0.92x |
-| 32 samples through rare filter | 46.0 µs |    65.3 µs |               0.70x |
-| 32 unique arrays               |  131 µs |     156 µs |               0.84x |
-| 128 literal samples            | 3.73 µs |    39.9 µs |               0.09x |
-| Passing property, 100 runs     | 28.0 µs |    42.1 µs |               0.67x |
-| `TestSchema`, 100 generations  | 36.9 µs |    44.5 µs |               0.83x |
-| First failure plus one shrink  | 1.36 µs |    8.76 µs |               0.16x |
-| Replay recorded failure        | 1.24 µs |    6.33 µs |               0.20x |
+| 32 recursive samples           |  117 µs |     147 µs |               0.79x |
+| 128 constrained strings        | 48.7 µs |     745 µs |               0.07x |
+| 128 bounded numbers            | 21.3 µs |    68.6 µs |               0.31x |
+| 128 `Uint8Array` samples       | 77.0 µs |    97.8 µs |               0.79x |
+| 128 `BigDecimal` samples       | 60.4 µs |    66.6 µs |               0.91x |
+| 128 `DateTime.Utc` samples     | 54.5 µs |    70.9 µs |               0.77x |
+| 128 named time zones           | 29.2 µs |    51.5 µs |               0.57x |
+| 128 time zones                 | 34.2 µs |    63.4 µs |               0.54x |
+| 128 zoned date-times           |  115 µs |     130 µs |               0.89x |
+| 32 samples through rare filter | 45.6 µs |    64.8 µs |               0.70x |
+| 32 unique arrays               |  129 µs |     153 µs |               0.84x |
+| 128 literal samples            | 3.70 µs |    39.9 µs |               0.09x |
+| Passing property, 100 runs     | 28.4 µs |    42.0 µs |               0.68x |
+| `TestSchema`, 100 generations  | 35.6 µs |    44.4 µs |               0.80x |
+| First failure plus one shrink  | 1.33 µs |    9.01 µs |               0.15x |
+| Replay recorded failure        | 1.22 µs |    6.36 µs |               0.19x |
 
 Cold recursive derivation is not included because the native fixture constructs and compiles a Schema, while the
 fast-check fixture constructs a hand-written arbitrary; it is not a like-for-like warm-generator comparison.

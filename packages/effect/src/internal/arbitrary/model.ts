@@ -157,7 +157,7 @@ export function mapSample<A, B>(self: Sample<A>, f: (value: A) => B): Sample<B> 
 
 function filterMapPull<A, B>(
   source: Pull.Pull<Sample<A>>,
-  f: (value: A) => Effect.Effect<Option.Option<B>>
+  f: (value: A) => Computation<Option.Option<B>>
 ): Pull.Pull<Sample<B>> {
   const queue: Array<Pull.Pull<Sample<A>>> = [source]
   const loop = (): Pull.Pull<Sample<B>> =>
@@ -171,7 +171,7 @@ function filterMapPull<A, B>(
           return loop()
         },
         onSuccess: (sample) =>
-          Effect.flatMapEager(f(sample.value), (mapped) => {
+          Effect.flatMapEager(toEffect(f(sample.value)), (mapped) => {
             if (Option.isSome(mapped)) {
               return Effect.succeed(makeSample(
                 mapped.value,
@@ -216,9 +216,9 @@ function filterPull<A>(source: Pull.Pull<Sample<A>>, predicate: (value: A) => bo
 /** @internal */
 export const filterMapSample = <A, B>(
   self: Sample<A>,
-  f: (value: A) => Effect.Effect<Option.Option<B>>
-): Effect.Effect<Option.Option<Sample<B>>> =>
-  Effect.mapEager(
+  f: (value: A) => Computation<Option.Option<B>>
+): Computation<Option.Option<Sample<B>>> =>
+  mapComputation(
     f(self.value),
     (value) =>
       Option.isNone(value)

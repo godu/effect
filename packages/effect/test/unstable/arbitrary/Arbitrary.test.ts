@@ -1266,6 +1266,34 @@ describe("Arbitrary", () => {
         }
       }))
 
+    it.effect("keeps asynchronous canonical codecs interruptible", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const schema = Schema.declare<number>((input): input is number => typeof input === "number", {
+          toCodecArbitrary: () =>
+            Schema.link<number>()(
+              Schema.Literal(1),
+              SchemaTransformation.transformOrFail<number, 1>({
+                decode: () => {
+                  Deferred.doneUnsafe(started, Effect.void)
+                  return Effect.never
+                },
+                encode: () => Effect.succeed(1)
+              })
+            )
+        })
+        const fiber = yield* Effect.forkChild(Arbitrary.sample(Arbitrary.schema(schema), {
+          count: 1,
+          seed: "interrupt-asynchronous-codec"
+        }))
+
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+
+        assert.isTrue(Exit.hasInterrupts(exit))
+      }))
+
     it.effect("derives JSON-canonical declarations through their codec", () =>
       Effect.gen(function*() {
         const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.URLSearchParams), {
