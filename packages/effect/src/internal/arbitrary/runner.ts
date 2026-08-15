@@ -139,14 +139,14 @@ function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRa
   }
 }
 
-const generateAttempt = <A>(
+const generateAttemptRaw = <A>(
   compiled: Model.Compiled<A>,
   seed: SeedState,
   attempt: number,
   size: number,
   shrinks: boolean
-): Effect.Effect<Model.Attempt<A>> =>
-  Model.toEffectGeneration(compiled.generate({
+): Model.Generation<A> =>
+  compiled.generate({
     size,
     shrinks,
     // This is fast-check v4.9.0's run-dependent numeric bias schedule (MIT). It makes short checks edge-heavy while
@@ -155,7 +155,16 @@ const generateAttempt = <A>(
     biasFactor: 2 + Math.floor(Math.log10(attempt + 1)),
     random: makeAttemptRandom(seed, attempt),
     budget: { remaining: compiled.minCost + size }
-  }))
+  })
+
+const generateAttempt = <A>(
+  compiled: Model.Compiled<A>,
+  seed: SeedState,
+  attempt: number,
+  size: number,
+  shrinks: boolean
+): Effect.Effect<Model.Attempt<A>> =>
+  Model.toEffectGeneration(generateAttemptRaw(compiled, seed, attempt, size, shrinks))
 
 const resolveMasterSeed = (seed: string | number | undefined): Effect.Effect<string | number> =>
   seed === undefined ? Random.nextInt : Effect.succeed(seed)
@@ -176,14 +185,18 @@ export const sample = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, options
   const values: Array<A> = []
   let discards = 0
   let attemptIndex = 0
+  let attemptsSinceYield = 0
   while (values.length < count) {
-    const attempt = yield* generateAttempt(self.gen, seedState, attemptIndex++, size, false)
+    const generated = generateAttemptRaw(self.gen, seedState, attemptIndex++, size, false)
+    const attempt = Model.isAttempt(generated) ? generated : yield* generated
     if (attempt._tag === "Generated") {
-      values.push(attempt.sample.value)
+      values.push(attempt.value)
     } else if (++discards > maxDiscards) {
       const error: SampleError = { _tag: "SampleError", generated: values.length, discards }
       return yield* Effect.fail(error)
-    } else if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) {
+    }
+    if (++attemptsSinceYield >= maxOpsBeforeYield) {
+      attemptsSinceYield = 0
       yield* Effect.yieldNow
     }
   }
@@ -286,13 +299,13 @@ export const check = Effect.fnUntraced(function*<A, E, R>(
     const data = replayData(replay)
     const attempt = yield* generateAttempt(self.gen, hashSeed(data.seed), data.attempt, data.size, true)
     if (attempt._tag === "Discarded") return { _tag: "ReplayMismatch", reason: "AttemptDiscarded" }
-    const outcome = yield* evaluateProperty(property, attempt.sample.value)
+    const outcome = yield* evaluateProperty(property, attempt.value)
     if (outcome._tag === "Passed") return { _tag: "ReplayMismatch", reason: "PropertyPassed" }
-    const replayed = yield* followReplay(attempt.sample, outcome, data.path, property)
+    const replayed = yield* followReplay(attempt, outcome, data.path, property)
     if (replayed._tag === "ReplayMismatch") return replayed
     return {
       _tag: "Falsified",
-      initialInput: attempt.sample.value,
+      initialInput: attempt.value,
       counterexample: replayed.current.value,
       failure: replayed.failure,
       runs: 1,
@@ -321,15 +334,15 @@ export const check = Effect.fnUntraced(function*<A, E, R>(
       if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
       continue
     }
-    const outcome = yield* evaluateProperty(property, attempt.sample.value)
+    const outcome = yield* evaluateProperty(property, attempt.value)
     if (outcome._tag === "Passed") {
       runs++
       continue
     }
-    const minimized = yield* shrink(attempt.sample, outcome, property, maxShrinks)
+    const minimized = yield* shrink(attempt, outcome, property, maxShrinks)
     return {
       _tag: "Falsified",
-      initialInput: attempt.sample.value,
+      initialInput: attempt.value,
       counterexample: minimized.current.value,
       failure: minimized.failure,
       runs: runs + 1,

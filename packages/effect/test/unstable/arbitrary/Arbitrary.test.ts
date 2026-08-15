@@ -17,6 +17,7 @@ import * as Chunk from "effect/Chunk"
 import * as DateTime from "effect/DateTime"
 import * as HashMap from "effect/HashMap"
 import * as HashSet from "effect/HashSet"
+import * as Scheduler from "effect/Scheduler"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const makeSuspendChain = (count: number): Schema.Codec<unknown> => {
@@ -954,17 +955,18 @@ describe("Arbitrary", () => {
 
     it.effect("uses the same generated value for sampling and a single-run check", () =>
       Effect.gen(function*() {
-        const arbitrary = Arbitrary.schema(
-          Schema.Array(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4))
-        )
+        const arbitrary = Arbitrary.schema(Schema.Struct({
+          values: Schema.Array(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
+          unique: Schema.UniqueArray(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4))
+        }))
         const sampled = yield* Arbitrary.sample(arbitrary, { count: 1, seed: "sample-check", size: 10 })
-        const checked: Array<ReadonlyArray<number>> = []
+        let checked: (typeof sampled)[number] | undefined
         yield* Arbitrary.check(arbitrary, (value) => {
-          checked.push(value)
+          checked = value
           return true
         }, { runs: 1, seed: "sample-check", size: 10 })
 
-        assert.deepStrictEqual(checked, sampled)
+        assert.deepStrictEqual(checked, sampled[0])
       }))
 
     it.effect("supports unique collections", () =>
@@ -981,7 +983,10 @@ describe("Arbitrary", () => {
 
     it.effect("uses Effect equality for constructive uniqueness", () =>
       Effect.gen(function*() {
-        const schema = Schema.UniqueArray(Schema.Struct({ value: Schema.Literal(1) })).check(Schema.isMinLength(2))
+        const schema = Schema.UniqueArray(Schema.Struct({ value: Schema.Literal(1) })).check(
+          Schema.isMinLength(2),
+          Schema.isMaxLength(2)
+        )
         const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
           count: 1,
           maxDiscards: 2,
@@ -1522,6 +1527,38 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every(Schema.is(Node)))
       }))
 
+    it.effect("uses the same recursive value for sampling and a single-run check", () =>
+      Effect.gen(function*() {
+        interface Node {
+          readonly left: ReadonlyArray<Node | null>
+          readonly right: ReadonlyArray<Node | null>
+        }
+        let Node!: Schema.Codec<Node>
+        const child = Schema.Union([Schema.Null, Schema.suspend(() => Node)])
+        const children = Schema.Array(child).check(Schema.isMinLength(1), Schema.isMaxLength(2))
+        Node = Schema.Struct({ left: children, right: children })
+        const arbitrary = Arbitrary.schema(Node)
+        const sampled = yield* Arbitrary.sample(arbitrary, {
+          count: 1,
+          seed: "recursive-parity",
+          size: 8
+        })
+        const checked: Array<Node> = []
+        yield* Arbitrary.check(arbitrary, (value) => {
+          checked.push(value)
+          return true
+        }, { runs: 1, seed: "recursive-parity", size: 8 })
+
+        assert.deepStrictEqual(checked, sampled)
+        const assertPropertyOrder = (node: Node | null): void => {
+          if (node === null) return
+          assert.deepStrictEqual(Object.keys(node), ["left", "right"])
+          for (const child of node.left) assertPropertyOrder(child)
+          for (const child of node.right) assertPropertyOrder(child)
+        }
+        assertPropertyOrder(sampled[0])
+      }))
+
     it.effect("reserves the shared recursion budget for later siblings", () =>
       Effect.gen(function*() {
         interface Node {
@@ -1557,6 +1594,7 @@ describe("Arbitrary", () => {
         })
         const countNodes = (root: Node | null): number => {
           if (root === null) return 0
+          assert.deepStrictEqual(Object.keys(root), ["left", "right"])
           return 1 + countNodes(root.left) + countNodes(root.right)
         }
         let left = 0
@@ -1732,6 +1770,22 @@ describe("Arbitrary", () => {
         }
       }))
 
+    it.effect("evaluates a residual filter once per generated value", () =>
+      Effect.gen(function*() {
+        let evaluations = 0
+        const schema = Schema.Null.check(Schema.makeFilter(() => {
+          evaluations++
+          return true
+        }))
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => true, {
+          runs: 1,
+          seed: "single-filter-evaluation"
+        })
+
+        assert.deepStrictEqual(result, { _tag: "Passed", runs: 1, discards: 0 })
+        assert.strictEqual(evaluations, 1)
+      }))
+
     it.effect("interrupts a synchronous residual-filter generation loop", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.makeFilter(() => false, { expected: "impossible" }))
@@ -1742,6 +1796,33 @@ describe("Arbitrary", () => {
         }))
 
         yield* Effect.yieldNow
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+
+        assert.isTrue(Exit.hasInterrupts(exit))
+      }))
+
+    it.effect("interrupts a synchronous successful generation loop", () =>
+      Effect.gen(function*() {
+        const count = 100_001
+        let generated = 0
+        const started = yield* Deferred.make<void>()
+        const schema = Schema.String.check(Schema.makeFilter(() => {
+          generated++
+          if (generated === 1) Deferred.doneUnsafe(started, Effect.void)
+          return true
+        }))
+        const arbitrary = Arbitrary.schema(schema)
+        generated = 0
+        const fiber = yield* Effect.forkChild(
+          Arbitrary.sample(arbitrary, {
+            count,
+            seed: "interrupt-successful-generation"
+          }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 16))
+        )
+
+        yield* Deferred.await(started)
+        assert.isBelow(generated, count)
         yield* Fiber.interrupt(fiber)
         const exit = yield* Fiber.await(fiber)
 

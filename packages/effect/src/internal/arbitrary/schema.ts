@@ -406,7 +406,7 @@ function lengthBounds(
 }
 
 function constant<A>(value: A): Model.Compiled<A> {
-  return Model.makeCompiled([], () => 0, () => Model.generated(Model.makeSample(value)))
+  return Model.makeCompiled([], () => 0, () => Model.makeSample(value))
 }
 
 function replaceAt<A>(values: ReadonlyArray<A>, index: number, value: A): Array<A> {
@@ -586,16 +586,206 @@ const generateSamples = (
       if (Model.isAttempt(generated)) {
         const attempt = generated
         if (attempt._tag === "Discarded") return Option.none()
-        out[childIndex] = attempt.sample
+        out[childIndex] = attempt
         continue
       }
       return Effect.flatMapEager(generated, (attempt) => {
         if (attempt._tag === "Discarded") return Effect.succeed(Option.none())
-        out[childIndex] = attempt.sample
+        out[childIndex] = attempt
         return Model.toEffect(loop())
       })
     }
     return Option.some(out)
+  }
+  return loop()
+}
+
+const generateRequiredObjectValues = (
+  properties: ReadonlyArray<{
+    readonly property: { readonly name: PropertyKey }
+    readonly compiled: Model.Compiled<any>
+  }>,
+  state: Model.GenerationState
+): Model.Generation<Record<PropertyKey, any>> => {
+  let reserved = 0
+  let recursive: Array<number> | undefined
+  for (let index = 0; index < properties.length; index++) {
+    const child = properties[index].compiled
+    if (reserved !== infinity) reserved += child.minCost
+    if (child.mayRecurse) (recursive ??= []).push(index)
+  }
+  if (reserved > state.budget.remaining) return Model.discarded
+  let order: Array<number> | undefined
+  if (recursive !== undefined && recursive.length > 1) {
+    order = properties.map((_, index) => index)
+    const shuffled = Model.shuffle(state, recursive)
+    let next = 0
+    for (let index = 0; index < order.length; index++) {
+      if (properties[index].compiled.mayRecurse) order[index] = shuffled[next++]
+    }
+  }
+  const values = new Array<any>(properties.length)
+  let index = 0
+  const loop = (): Model.Generation<Record<PropertyKey, any>> => {
+    while (index < properties.length) {
+      const childIndex = order?.[index] ?? index
+      index++
+      const child = properties[childIndex]
+      reserved -= child.compiled.minCost
+      const generated = generateWithReservedBudget(child.compiled, state, reserved)
+      if (Model.isAttempt(generated)) {
+        if (generated._tag === "Discarded") return Model.discarded
+        values[childIndex] = generated.value
+        continue
+      }
+      return Effect.flatMapEager(generated, (attempt) => {
+        if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+        values[childIndex] = attempt.value
+        return Model.toEffectGeneration(loop())
+      })
+    }
+    const out: Record<PropertyKey, any> = {}
+    for (let index = 0; index < properties.length; index++) {
+      InternalRecord.assignProperty(out, properties[index].property.name, values[index])
+    }
+    return Model.makeSample(out)
+  }
+  return loop()
+}
+
+const generateRepeatedValues = (
+  child: Model.Compiled<any>,
+  count: number,
+  state: Model.GenerationState
+): Model.Generation<ReadonlyArray<any>> => {
+  // The packed push loop follows fast-check v4.9.0's ArrayArbitrary generation strategy (MIT).
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
+  const out: Array<any> = []
+  let remaining = count
+  let reserved = count * child.minCost
+  const loop = (): Model.Generation<ReadonlyArray<any>> => {
+    while (remaining > 0) {
+      reserved -= child.minCost
+      const generated = generateWithReservedBudget(child, state, reserved)
+      if (Model.isAttempt(generated)) {
+        if (generated._tag === "Discarded") return Model.discarded
+        out.push(generated.value)
+        remaining--
+        continue
+      }
+      return Effect.flatMapEager(generated, (attempt) => {
+        if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+        out.push(attempt.value)
+        remaining--
+        return Model.toEffectGeneration(loop())
+      })
+    }
+    return Model.makeSample(out)
+  }
+  return loop()
+}
+
+const generateRepeatedRecursiveValues = (
+  child: Model.Compiled<any>,
+  count: number,
+  state: Model.GenerationState
+): Model.Generation<ReadonlyArray<any>> => {
+  const out = new Array<any>(count)
+  const order = Model.shuffle(state, Array.from({ length: count }, (_, index) => index))
+  let index = 0
+  let reserved = count * child.minCost
+  const loop = (): Model.Generation<ReadonlyArray<any>> => {
+    while (index < count) {
+      reserved -= child.minCost
+      const generated = generateWithReservedBudget(child, state, reserved)
+      if (Model.isAttempt(generated)) {
+        if (generated._tag === "Discarded") return Model.discarded
+        out[order[index++]] = generated.value
+        continue
+      }
+      return Effect.flatMapEager(generated, (attempt) => {
+        if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+        out[order[index++]] = attempt.value
+        return Model.toEffectGeneration(loop())
+      })
+    }
+    return Model.makeSample(out)
+  }
+  return loop()
+}
+
+// Primitive Set tracking follows fast-check v4.9.0's SameValueSet strategy (MIT). Hash buckets extend it with
+// Effect's equality semantics for objects.
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/SameValueSet.ts
+const makeUniqueAdder = (): (value: any) => boolean => {
+  let primitives: Set<any> | undefined
+  let buckets: Map<number, Array<any>> | undefined
+  return (value) => {
+    if (value === null || typeof value !== "object" && typeof value !== "function") {
+      const set = primitives ??= new Set()
+      const size = set.size
+      set.add(value)
+      return set.size !== size
+    }
+    const hash = Hash.hash(value)
+    const map = buckets ??= new Map()
+    const bucket = map.get(hash)
+    if (bucket !== undefined) {
+      for (let index = 0; index < bucket.length; index++) {
+        if (Equal.equals(bucket[index], value)) return false
+      }
+      bucket.push(value)
+    } else {
+      map.set(hash, [value])
+    }
+    return true
+  }
+}
+
+const generateRepeatedUniqueValues = (
+  child: Model.Compiled<any>,
+  count: number,
+  state: Model.GenerationState
+): Model.Generation<ReadonlyArray<any>> => {
+  const out: Array<any> = []
+  const addUnique = makeUniqueAdder()
+  let remaining = count
+  let reserved = count * child.minCost
+  let retries = 0
+  let budget = state.budget.remaining
+  const loop = (): Model.Generation<ReadonlyArray<any>> => {
+    while (remaining > 0) {
+      if (retries === 0) {
+        reserved -= child.minCost
+        budget = state.budget.remaining
+      }
+      const generated = generateWithReservedBudget(child, state, reserved)
+      if (Model.isAttempt(generated)) {
+        if (generated._tag === "Discarded") return Model.discarded
+        if (!addUnique(generated.value)) {
+          if (++retries >= count) return Model.discarded
+          state.budget.remaining = budget
+          continue
+        }
+        out.push(generated.value)
+        remaining--
+        retries = 0
+        continue
+      }
+      return Effect.flatMapEager(generated, (attempt) => {
+        if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
+        if (!addUnique(attempt.value)) {
+          if (++retries >= count) return Effect.succeed(Model.discarded)
+          state.budget.remaining = budget
+        } else {
+          out.push(attempt.value)
+          remaining--
+          retries = 0
+        }
+        return Model.toEffectGeneration(loop())
+      })
+    }
+    return Model.makeSample(out)
   }
   return loop()
 }
@@ -974,15 +1164,18 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       }
       if (checks.filters.length > 0) {
         const generate = placeholder.generate
+        const passes = (value: unknown) => {
+          for (let index = 0; index < checks.filters.length; index++) {
+            if (checks.filters[index].run(value, ast, SchemaAST.defaultParseOptions) !== undefined) return false
+          }
+          return true
+        }
         placeholder.generate = (state) =>
           Model.mapGeneration(generate(state), (attempt) => {
             if (attempt._tag === "Discarded") return Model.discarded
-            const sample = Model.filterSample(
-              attempt.sample,
-              (value) =>
-                checks.filters.every((filter) => filter.run(value, ast, SchemaAST.defaultParseOptions) === undefined)
-            )
-            return Option.isSome(sample) ? Model.generated(sample.value) : Model.discarded
+            if (!state.shrinks) return passes(attempt.value) ? attempt : Model.discarded
+            const sample = Model.filterSample(attempt, passes)
+            return Option.isSome(sample) ? sample.value : Model.discarded
           })
       }
     })
@@ -1012,10 +1205,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           () => 0,
           (state) => {
             const value = Model.randomBoolean(state)
-            return Model.generated(Model.makeSample(
+            return Model.makeSample(
               value,
               state.shrinks && value ? Model.pullFromArray([Model.makeSample(false)]) : undefined
-            ))
+            )
           }
         )
       case "String": {
@@ -1044,16 +1237,14 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               value = pattern.generate(state, minimum, upper)
             }
             if (value === undefined) return Model.discarded
-            return Model.generated(
-              state.shrinks
-                ? Model.sampleFromShrink(
-                  value,
-                  pattern === undefined
-                    ? (value) => shrinkString(value, minimum)
-                    : (value) => pattern.shrink(value, minimum)
-                )
-                : Model.makeSample(value)
-            )
+            return state.shrinks
+              ? Model.sampleFromShrink(
+                value,
+                pattern === undefined
+                  ? (value) => shrinkString(value, minimum)
+                  : (value) => pattern.shrink(value, minimum)
+              )
+              : Model.makeSample(value)
           }
         )
       }
@@ -1100,11 +1291,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             const value = integer
               ? randomInteger!(state)
               : randomNumber!(state)
-            return Model.generated(
-              state.shrinks
-                ? numberSample(value, bounds.minimum, bounds.maximum, integer)
-                : Model.makeSample(value)
-            )
+            return state.shrinks
+              ? numberSample(value, bounds.minimum, bounds.maximum, integer)
+              : Model.makeSample(value)
           }
         )
       }
@@ -1138,11 +1327,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               randomBigInt = Model.makeRandomNumericBigInt(low, high)
             }
             const value = randomBigInt(state)
-            return Model.generated(
-              state.shrinks
-                ? bigIntSample(value, minimum, maximum)
-                : Model.makeSample(value)
-            )
+            return state.shrinks
+              ? bigIntSample(value, minimum, maximum)
+              : Model.makeSample(value)
           }
         )
       }
@@ -1155,7 +1342,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             Model.mapGeneration(strings.generate(state), (attempt) =>
               attempt._tag === "Discarded"
                 ? attempt
-                : Model.generated(Model.mapSample(attempt.sample, (value) => Symbol.for(value))))
+                : Model.mapSample(attempt, (value) => Symbol.for(value)))
         )
       }
       case "Unknown":
@@ -1171,12 +1358,12 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           (state) =>
             Model.mapGeneration(json.generate(state), (attempt) => {
               if (
-                attempt._tag === "Generated" && typeof attempt.sample.value === "object" &&
-                attempt.sample.value !== null
+                attempt._tag === "Generated" && typeof attempt.value === "object" &&
+                attempt.value !== null
               ) {
                 return attempt
               }
-              return Model.generated(Model.makeSample({}))
+              return Model.makeSample({})
             })
         )
       }
@@ -1186,7 +1373,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           [],
           () => 0,
-          (state) => Model.generated(Model.makeSample(values[Model.randomIndex(state, values.length)]))
+          (state) => Model.makeSample(values[Model.randomIndex(state, values.length)])
         )
       }
       case "TemplateLiteral": {
@@ -1204,7 +1391,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 tailCount: 0,
                 minimum: generated.value.length
               }, state.shrinks)
-              return Model.generated(Model.mapSample(sample, (parts) => parts.map(globalThis.String).join("")))
+              return Model.mapSample(sample, (parts) => parts.map(globalThis.String).join(""))
             })
         )
       }
@@ -1237,15 +1424,15 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                   Model.toEffectGeneration(
                     fallback.generate({ ...state, budget: { remaining: fallback.minCost } })
                   ),
-                  (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt.sample) : Cause.done()
+                  (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt) : Cause.done()
                 )
               })
-              return Model.generated(Model.makeSample(
-                attempt.sample.value,
-                attempt.sample.shrinks === undefined
+              return Model.makeSample(
+                attempt.value,
+                attempt.shrinks === undefined
                   ? fallbackPull
-                  : Model.concatPulls([fallbackPull, attempt.sample.shrinks])
-              ))
+                  : Model.concatPulls([fallbackPull, attempt.shrinks])
+              )
             })
           }
         )
@@ -1335,19 +1522,31 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         const possible = possibleCombinations(state.size, state.budget.remaining)
         if (possible.length === 0) return Model.discarded
         const [optionalCount, repeatCount] = possible[Model.randomLength(state, 0, possible.length - 1)]
+        // Lower homogeneous arrays directly when no shrink context is needed.
+        if (
+          !state.shrinks && elements.length === 0 && tail.length === 0 && head !== undefined &&
+          (!head.mayRecurse || constraint?.unique !== true)
+        ) {
+          const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
+          return head.mayRecurse
+            ? generateRepeatedRecursiveValues(head, repeatCount, itemState)
+            : constraint?.unique === true
+            ? generateRepeatedUniqueValues(head, repeatCount, itemState)
+            : generateRepeatedValues(head, repeatCount, itemState)
+        }
         const selected = [
           ...elements.slice(0, required + optionalCount).map((element) => element.compiled),
           ...Array.from({ length: repeatCount }, () => head!),
           ...tail
         ]
         const makeAttempt = (generated: ReadonlyArray<Model.Sample<any>>) =>
-          Model.generated(arraySample(generated, {
+          arraySample(generated, {
             fixedCount: required + optionalCount,
             optionalCount,
             repeatCount,
             tailCount: tail.length,
             minimum
-          }, state.shrinks))
+          }, state.shrinks)
         // Explicit collection minima must stay productive while progressive checks are still at size zero.
         const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
         if (constraint?.unique !== true) {
@@ -1356,31 +1555,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
           )
         }
-        // Constructive uniqueness and the requested-length consecutive duplicate circuit breaker follow fast-check
-        // v4.9.0's ArrayArbitrary strategy (MIT). Hash buckets make Effect.Equal lookup expected-linear while retaining
-        // collision checks with Effect's equality semantics.
+        // The requested-length consecutive duplicate circuit breaker follows fast-check v4.9.0's ArrayArbitrary
+        // strategy (MIT).
         // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
         const generated: Array<Model.Sample<any>> = []
-        const primitives = new globalThis.Set<any>()
-        const buckets = new globalThis.Map<number, Array<any>>()
-        const addUnique = (value: any): boolean => {
-          if (value === null || typeof value !== "object" && typeof value !== "function") {
-            if (primitives.has(value)) return false
-            primitives.add(value)
-            return true
-          }
-          const hash = Hash.hash(value)
-          const bucket = buckets.get(hash)
-          if (bucket !== undefined) {
-            for (let index = 0; index < bucket.length; index++) {
-              if (Equal.equals(bucket[index], value)) return false
-            }
-            bucket.push(value)
-          } else {
-            buckets.set(hash, [value])
-          }
-          return true
-        }
+        const addUnique = makeUniqueAdder()
         let reserved = sumCosts(selected.map((child) => child.minCost))
         const maximumRetries = selected.length
         let index = 0
@@ -1397,23 +1576,23 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             if (Model.isAttempt(generatedChild)) {
               const attempt = generatedChild
               if (attempt._tag === "Discarded") return Model.discarded
-              if (!addUnique(attempt.sample.value)) {
+              if (!addUnique(attempt.value)) {
                 if (++retries >= maximumRetries) return Model.discarded
                 state.budget.remaining = budget
                 continue
               }
-              generated.push(attempt.sample)
+              generated.push(attempt)
               index++
               retries = 0
               continue
             }
             return Effect.flatMapEager(generatedChild, (attempt) => {
               if (attempt._tag === "Discarded") return Effect.succeed(Model.discarded)
-              if (!addUnique(attempt.sample.value)) {
+              if (!addUnique(attempt.value)) {
                 if (++retries >= maximumRetries) return Effect.succeed(Model.discarded)
                 state.budget.remaining = budget
               } else {
-                generated.push(attempt.sample)
+                generated.push(attempt)
                 index++
                 retries = 0
               }
@@ -1468,6 +1647,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return requiredCost + sumCosts(optionalCosts) + (need - optionalCosts.length) * indexCost
       },
       (state) => {
+        if (!state.shrinks && optional.length === 0 && indexes.length === 0) {
+          return generateRequiredObjectValues(required, state)
+        }
         const currentMaximum = Math.max(minimum, required.length, state.size)
         const upper = maximum === undefined ? currentMaximum : Math.min(maximum, currentMaximum)
         const maxOptional = Math.min(optional.length, upper - required.length)
@@ -1501,7 +1683,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               removable: named[index].optional
             }))
             if (indexCount === 0) {
-              return Model.generated(objectSample(entries, minimum, state.shrinks))
+              return objectSample(entries, minimum, state.shrinks)
             }
             return Effect.gen(function*() {
               for (let position = 0; position < indexCount; position++) {
@@ -1522,7 +1704,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 let retries = 0
                 while (true) {
                   if (keyAttempt._tag === "Discarded") return Model.discarded
-                  const normalized = normalizePropertyKeySample(keyAttempt.sample)
+                  const normalized = normalizePropertyKeySample(keyAttempt)
                   if (Option.isNone(normalized)) return Model.discarded
                   keySample = normalized.value
                   if (!entries.some((entry) => entry.key === keySample.value)) break
@@ -1536,9 +1718,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                   generateWithReservedBudget(index.value, state, futureReserved)
                 )
                 if (value._tag === "Discarded") return Model.discarded
-                entries.push({ key: keySample.value, keySample, sample: value.sample, removable: true })
+                entries.push({ key: keySample.value, keySample, sample: value, removable: true })
               }
-              return Model.generated(objectSample(entries, minimum, state.shrinks))
+              return objectSample(entries, minimum, state.shrinks)
             })
           }
         )
@@ -1592,8 +1774,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         Model.flatMapGeneration(target.generate(state), (attempt) => {
           if (attempt._tag === "Discarded") return Model.discarded
           return Effect.mapEager(
-            Model.filterMapSample(attempt.sample, decode),
-            (sample) => Option.isSome(sample) ? Model.generated(sample.value) : Model.discarded
+            Model.filterMapSample(attempt, decode),
+            (sample) => Option.isSome(sample) ? sample.value : Model.discarded
           )
         })
     )

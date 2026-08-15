@@ -5,14 +5,9 @@ import * as Pull from "../../Pull.ts"
 
 /** @internal */
 export interface Sample<out A> {
+  readonly _tag: "Generated"
   readonly value: A
   readonly shrinks: Pull.Pull<Sample<A>> | undefined
-}
-
-/** @internal */
-export interface Generated<out A> {
-  readonly _tag: "Generated"
-  readonly sample: Sample<A>
 }
 
 /** @internal */
@@ -21,7 +16,7 @@ export interface Discarded {
 }
 
 /** @internal */
-export type Attempt<A> = Generated<A> | Discarded
+export type Attempt<A> = Sample<A> | Discarded
 
 /** @internal */
 export type Computation<A> = A | Effect.Effect<A>
@@ -58,9 +53,6 @@ export interface Compiled<A> {
 
 /** @internal */
 export const discarded: Discarded = { _tag: "Discarded" }
-
-/** @internal */
-export const generated = <A>(sample: Sample<A>): Attempt<A> => ({ _tag: "Generated", sample })
 
 /** @internal */
 export function mapComputation<A, B>(self: Computation<A>, f: (value: A) => B): Computation<B> {
@@ -140,7 +132,11 @@ export function concatPulls<A>(pulls: ReadonlyArray<Pull.Pull<A>>): Pull.Pull<A>
 }
 
 /** @internal */
-export const makeSample = <A>(value: A, shrinks?: Pull.Pull<Sample<A>>): Sample<A> => ({ value, shrinks })
+export const makeSample = <A>(value: A, shrinks?: Pull.Pull<Sample<A>>): Sample<A> => ({
+  _tag: "Generated",
+  value,
+  shrinks
+})
 
 /** @internal */
 export function sampleFromShrink<A>(value: A, shrink: (value: A) => ReadonlyArray<A>): Sample<A> {
@@ -282,6 +278,16 @@ function randomUint32Below(state: GenerationState, rangeSize: number): number {
   return Math.floor(value / bucketSize)
 }
 
+function makeRandomUint32Below(rangeSize: number): (state: GenerationState) => number {
+  const bucketSize = Math.floor(numberOfUint32Values / rangeSize)
+  const maximumAccepted = bucketSize * rangeSize
+  return (state) => {
+    let value = state.random.nextUint32()
+    while (value >= maximumAccepted) value = state.random.nextUint32()
+    return Math.floor(value / bucketSize)
+  }
+}
+
 /** @internal */
 export const randomInt = (state: GenerationState, minimum: number, maximum: number): number => {
   minimum = Math.ceil(minimum)
@@ -331,6 +337,48 @@ export const randomBigInt = (state: GenerationState, minimum: bigint, maximum: b
       value = value << BigInt(32) | word
     }
     if (value < width) return minimum + value
+  }
+}
+
+function makeRandomInt(minimum: number, maximum: number): (state: GenerationState) => number {
+  minimum = Math.ceil(minimum)
+  maximum = Math.floor(maximum)
+  if (minimum === maximum) return () => minimum
+  const width = maximum - minimum + 1
+  if (width <= numberOfUint32Values) {
+    const randomBelow = makeRandomUint32Below(width)
+    return (state) => minimum + randomBelow(state)
+  }
+  const numberOfDoubleValues = 0x20000000000000
+  if (width <= numberOfDoubleValues) {
+    const bucketSize = Math.floor(numberOfDoubleValues / width)
+    const maximumAccepted = bucketSize * width
+    return (state) => {
+      while (true) {
+        const value = Math.floor(state.random.nextDoubleUnsafe() * numberOfDoubleValues)
+        if (value < maximumAccepted) return minimum + Math.floor(value / bucketSize)
+      }
+    }
+  }
+  const random = makeRandomBigInt(BigInt(minimum), BigInt(maximum))
+  return (state) => Number(random(state))
+}
+
+function makeRandomBigInt(minimum: bigint, maximum: bigint): (state: GenerationState) => bigint {
+  if (minimum === maximum) return () => minimum
+  const width = maximum - minimum + BigInt(1)
+  const bitLength = (width - BigInt(1)).toString(2).length
+  const leadingBits = (bitLength - 1) % 32 + 1
+  const leadingRange = 2 ** leadingBits
+  const randomLeading = makeRandomUint32Below(leadingRange)
+  return (state) => {
+    while (true) {
+      let value = BigInt(randomLeading(state))
+      for (let remaining = bitLength - leadingBits; remaining > 0; remaining -= 32) {
+        value = value << BigInt(32) | BigInt(state.random.nextUint32())
+      }
+      if (value < width) return minimum + value
+    }
   }
 }
 
@@ -387,13 +435,13 @@ function bigIntBiasRanges(minimum: bigint, maximum: bigint): ReadonlyArray<BigIn
   return minimum < BigInt(0) ? [closeToMaximum, closeToMinimum] : [closeToMinimum, closeToMaximum]
 }
 
-function selectNumberRange(state: GenerationState, ranges: ReadonlyArray<NumberRange>): NumberRange {
+function selectNumberRange<A extends NumberRange>(state: GenerationState, ranges: ReadonlyArray<A>): A {
   if (ranges.length === 1) return ranges[0]
   const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
   return index < 0 ? ranges[0] : ranges[index + 1]
 }
 
-function selectBigIntRange(state: GenerationState, ranges: ReadonlyArray<BigIntRange>): BigIntRange {
+function selectBigIntRange<A extends BigIntRange>(state: GenerationState, ranges: ReadonlyArray<A>): A {
   if (ranges.length === 1) return ranges[0]
   const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
   return index < 0 ? ranges[0] : ranges[index + 1]
@@ -404,11 +452,14 @@ export function makeRandomNumericInt(
   minimum: number,
   maximum: number
 ): (state: GenerationState) => number {
-  const full = { minimum, maximum }
-  const biased = numberBiasRanges(minimum, maximum)
+  const full = { minimum, maximum, random: makeRandomInt(minimum, maximum) }
+  const biased = numberBiasRanges(minimum, maximum).map((range) => ({
+    ...range,
+    random: makeRandomInt(range.minimum, range.maximum)
+  }))
   return (state) => {
     const range = randomInt(state, 1, state.biasFactor) === 1 ? selectNumberRange(state, biased) : full
-    return randomInt(state, range.minimum, range.maximum)
+    return range.random(state)
   }
 }
 
@@ -417,11 +468,14 @@ export function makeRandomNumericBigInt(
   minimum: bigint,
   maximum: bigint
 ): (state: GenerationState) => bigint {
-  const full = { minimum, maximum }
-  const biased = bigIntBiasRanges(minimum, maximum)
+  const full = { minimum, maximum, random: makeRandomBigInt(minimum, maximum) }
+  const biased = bigIntBiasRanges(minimum, maximum).map((range) => ({
+    ...range,
+    random: makeRandomBigInt(range.minimum, range.maximum)
+  }))
   return (state) => {
     const range = randomInt(state, 1, state.biasFactor) === 1 ? selectBigIntRange(state, biased) : full
-    return randomBigInt(state, range.minimum, range.maximum)
+    return range.random(state)
   }
 }
 
