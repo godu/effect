@@ -43,7 +43,6 @@ interface Interval {
 
 export interface Compiled {
   readonly minimumLength: number
-  readonly hasLengthBetween: (minimumLength: number, maximumLength: number) => boolean
   readonly generate: (
     state: Model.GenerationState,
     minimumLength: number,
@@ -816,13 +815,6 @@ export function compile(pattern: Pattern): Compiled | undefined {
   const minimum = minimumLength(node)
   return {
     minimumLength: minimum,
-    hasLengthBetween: (minimumLength, maximumLength) => {
-      const lengths = possibleLengths(node, maximumLength, new Map())
-      for (let length = minimumLength; length <= maximumLength; length++) {
-        if (lengths[length]) return true
-      }
-      return false
-    },
     generate: (state, minimumLength, maximumLength) => {
       const cache: LengthCache = new Map()
       const lengths = possibleLengths(node, maximumLength, cache)

@@ -37,11 +37,15 @@ interface SchemaCatalogEntry {
 const verifySchemaCatalog = Effect.fnUntraced(function*(entries: ReadonlyArray<SchemaCatalogEntry>) {
   for (const entry of entries) {
     const result = yield* Arbitrary.check(Arbitrary.schema(entry.schema), Schema.is(entry.schema), {
-      runs: 20,
+      runs: 100,
       maxDiscards: 200,
       seed: `schema-catalog:${entry.name}`
     })
     assert.strictEqual(result._tag, "Passed", entry.name)
+    if (result._tag === "Passed") {
+      assert.strictEqual(result.runs, 100, entry.name)
+      assert.isAtMost(result.discards, 200, entry.name)
+    }
   }
 })
 
@@ -477,18 +481,33 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every(Schema.is(schema)))
       }))
 
-    it("fails derivation when pattern and length constraints cannot overlap", () => {
-      const schema = Schema.String.check(
-        Schema.isPattern(/^(aa)+$/),
-        Schema.isMinLength(3),
-        Schema.isMaxLength(3)
-      )
+    it.effect("bounds incompatible pattern and length constraints", () =>
+      Effect.gen(function*() {
+        const schemas = [
+          Schema.String.check(
+            Schema.isPattern(/^(aa)+$/),
+            Schema.isMinLength(3),
+            Schema.isMaxLength(3)
+          ),
+          Schema.String.check(
+            Schema.isPattern(/^$/),
+            Schema.isMinLength(1)
+          )
+        ]
 
-      assert.throws(
-        () => Arbitrary.schema(schema),
-        /Unable to derive an arbitrary for string constraints/
-      )
-    })
+        for (const schema of schemas) {
+          const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
+            count: 1,
+            maxDiscards: 2,
+            seed: "incompatible-pattern-length"
+          }))
+
+          assert.isTrue(Result.isFailure(result))
+          if (Result.isFailure(result)) {
+            assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          }
+        }
+      }))
 
     it.effect("keeps pattern constraints while shrinking strings", () =>
       Effect.gen(function*() {
@@ -1304,7 +1323,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    describe("legacy schema catalog parity", () => {
+    describe("native Schema catalog", () => {
       it.effect("derives primitive and structural schemas", () => {
         const enumValues = {
           Apple: "apple",
@@ -1461,8 +1480,12 @@ describe("Arbitrary", () => {
           { name: "HashMap", schema: Schema.HashMap(Schema.String, Schema.Number) },
           { name: "Chunk", schema: Schema.Chunk(Schema.Number) },
           { name: "Redacted", schema: Schema.Redacted(Schema.String, { label: "password" }) },
+          { name: "CauseReason", schema: Schema.CauseReason(Schema.String, Schema.String) },
           { name: "Cause", schema: Schema.Cause(Schema.String, Schema.String) },
-          { name: "Exit", schema: Schema.Exit(Schema.Number, Schema.String, Schema.String) }
+          { name: "ErrorInstance", schema: Schema.ErrorInstance() },
+          { name: "Exit", schema: Schema.Exit(Schema.Number, Schema.String, Schema.String) },
+          { name: "File", schema: Schema.File },
+          { name: "FormData", schema: Schema.FormData }
         ]))
 
       it("rejects uninhabited structural schemas", () => {
@@ -1971,6 +1994,21 @@ describe("Arbitrary", () => {
         if (result._tag === "Falsified") {
           assert.deepStrictEqual(result.failure, { _tag: "PropertyError", error: "property failure" })
         }
+      }))
+
+    it.effect("requires an explicit true result from pure and Effectful properties", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(Schema.Literal("value"))
+        const pureProperty = (() => 1) as unknown as () => boolean
+        const effectfulProperty = (() => Effect.succeed("yes")) as unknown as () => Effect.Effect<boolean>
+
+        const pure = yield* Arbitrary.check(arbitrary, pureProperty, { runs: 1, seed: "pure-truthy" })
+        const effectful = yield* Arbitrary.check(arbitrary, effectfulProperty, { runs: 1, seed: "effectful-truthy" })
+
+        assert.strictEqual(pure._tag, "Falsified")
+        assert.strictEqual(effectful._tag, "Falsified")
+        if (pure._tag === "Falsified") assert.deepStrictEqual(pure.failure, { _tag: "ReturnedFalse" })
+        if (effectful._tag === "Falsified") assert.deepStrictEqual(effectful.failure, { _tag: "ReturnedFalse" })
       }))
 
     it.effect("does not turn synchronous property defects into a property result", () =>

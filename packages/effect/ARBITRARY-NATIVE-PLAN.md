@@ -254,7 +254,7 @@ generic `Json` declaration for an opaque type.
 `Arbitrary.schema` compiles immediately and reports deterministic structural errors before returning an arbitrary:
 
 - an unsupported `Declaration`;
-- contradictory recognized constraints;
+- contradictory scalar or cardinality bounds;
 - a recursive component with no finite productive route;
 - an unsupported AST case in the current unstable implementation.
 
@@ -439,7 +439,9 @@ in `Annotations.ToArbitrary`. The native compiler consumes:
 It never invokes legacy candidates whose callbacks accept the fast-check module. The temporary duplication is removed
 with the legacy compiler; no shared collector is introduced for code that is intended to disappear.
 
-Recognized impossible constraints fail in `Arbitrary.schema`. Unknown predicates remain bounded runtime filters.
+Contradictory scalar or cardinality bounds fail in `Arbitrary.schema`. Incompatibilities that require composing a
+pattern with length constraints or other checks remain bounded runtime filters and are the Schema author's
+responsibility.
 
 At minimum the vertical slice pushes down:
 
@@ -1043,7 +1045,7 @@ native generators.
 ### Schema compiler
 
 - immediate error for unsupported Declaration and unsupported deterministic AST;
-- immediate error for contradictory recognized constraints;
+- immediate error for contradictory scalar or cardinality bounds;
 - no global validation pass is invoked;
 - string, number, array, tuple, struct, record, and union samples satisfy checks;
 - Number covers signed zero, adjacent exclusive bounds, subnormals, finite extremes, infinities, NaN, and local
@@ -1061,8 +1063,10 @@ native generators.
 
 ### Differential and parity work
 
-Differential tests against fast-check compare only validity, termination, and broad coverage. They do not require equal
-seeds, exact values, distributions, shrink order, or minimal counterexamples.
+Development-time differential audits against fast-check compare only validity, termination, and broad coverage. They
+do not require equal seeds, exact values, distributions, shrink order, or minimal counterexamples. The permanent
+native catalog uses `Schema.is` as its validity oracle, requires 100 successful runs within a bounded discard budget,
+and does not retain a dependency on the legacy engine.
 
 After the vertical slice, port the semantic assertions from the current 1,700-line
 `packages/effect/test/schema/toArbitrary.test.ts` in groups: remaining AST tags, patterns/candidates, collections,
@@ -1231,7 +1235,8 @@ The migration is complete only when all of the following are true:
 
 - every supported Schema AST tag and built-in Declaration has native coverage or an intentional derivation error;
 - recursive and mutually recursive validity/productivity tests pass;
-- recognized constraints generate constructively and unknown filters exhaust predictably;
+- recognized constraints generate constructively, while incompatible composed checks and unknown filters exhaust
+  predictably;
 - every observed sample and shrink satisfies its node-local Schema invariants;
 - replay, typed property failures, defects, and interruption behave as specified;
 - native `TestSchema` and `@effect/vitest` paths no longer require fast-check;

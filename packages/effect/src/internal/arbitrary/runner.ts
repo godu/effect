@@ -200,10 +200,10 @@ const evaluateProperty = <A, E, R>(
   value: A
 ): Effect.Effect<typeof passedProperty | PropertyFailure<E>, never, R> => {
   const output = property(value)
-  if (!Effect.isEffect(output)) return Effect.succeed(output ? passedProperty : returnedFalse)
+  if (!Effect.isEffect(output)) return Effect.succeed(output === true ? passedProperty : returnedFalse)
   return Effect.matchEager(output, {
     onFailure: (error): PropertyError<E> => ({ _tag: "PropertyError", error }),
-    onSuccess: (success) => success ? passedProperty : returnedFalse
+    onSuccess: (success) => success === true ? passedProperty : returnedFalse
   })
 }
 

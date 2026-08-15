@@ -946,13 +946,6 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           if (pattern !== undefined) patterns.push(pattern)
         }
         const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "string")
-        if (maximum !== undefined) {
-          for (const pattern of patterns) {
-            if (!pattern.hasLengthBetween(minimum, maximum)) {
-              throw arbitraryError("string constraints", path)
-            }
-          }
-        }
         return Model.makeCompiled(
           [],
           () => 0,
