@@ -35,7 +35,7 @@ validate the same output domains, although their generation distributions are no
 | ----------------------------- | ------: | ----------------: | --------------: |
 | 32 recursive samples          |  347 µs |            458 µs |           0.76x |
 | 128 constrained strings       |  129 µs |           1.07 ms |           0.12x |
-| 128 `Uint8Array` samples      |  326 µs |            111 µs |           2.94x |
+| 128 `Uint8Array` samples      |  150 µs |           97.0 µs |           1.55x |
 | Passing property, 100 runs    | 30.1 µs |           41.7 µs |           0.72x |
 | First failure plus one shrink | 1.41 µs |           9.45 µs |           0.15x |
 | Replay recorded failure       | 1.29 µs |           6.52 µs |           0.20x |

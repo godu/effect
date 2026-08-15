@@ -7,6 +7,7 @@ import * as Option from "../../Option.ts"
 import * as Order from "../../Order.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
+import * as SchemaParser from "../../SchemaParser.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
 import * as Model from "./model.ts"
@@ -23,6 +24,10 @@ interface Checks {
 
 const infinity = Number.POSITIVE_INFINITY
 const finiteNumberConstraint: Constraint = { number: "finite" }
+const optionMatch = { onFailure: Option.none, onSuccess: Option.some }
+
+const optionEager = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<Option.Option<A>, never, R> =>
+  Effect.matchEager(self, optionMatch) as Effect.Effect<Option.Option<A>, never, R>
 
 function arbitraryError(what: string, path: ReadonlyArray<PropertyKey>) {
   return errorWithPath(`Unable to derive an arbitrary for ${what}`, path)
@@ -554,11 +559,17 @@ const generateSamples = (
   state: Model.GenerationState,
   additionalReserved = 0
 ): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
-  let reserved = sumCosts(children.map((child) => child.minCost)) + additionalReserved
+  let reserved = additionalReserved
+  let recursive: Array<number> | undefined
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]
+    if (reserved !== infinity) reserved += child.minCost
+    if (child.mayRecurse) (recursive ??= []).push(index)
+  }
   if (reserved > state.budget.remaining) return Option.none()
-  const order = children.map((_, index) => index)
-  const recursive = order.filter((index) => children[index].mayRecurse)
-  if (recursive.length > 1) {
+  let order: Array<number> | undefined
+  if (recursive !== undefined && recursive.length > 1) {
+    order = children.map((_, index) => index)
     const shuffled = Model.shuffle(state, recursive)
     let next = 0
     for (let index = 0; index < order.length; index++) {
@@ -568,8 +579,9 @@ const generateSamples = (
   const out = new Array<Model.Sample<any>>(children.length)
   let index = 0
   const loop = (): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
-    while (index < order.length) {
-      const childIndex = order[index++]
+    while (index < children.length) {
+      const childIndex = order?.[index] ?? index
+      index++
       const child = children[childIndex]
       reserved -= child.minCost
       const generated = generateWithReservedBudget(child, state, reserved)
@@ -1299,6 +1311,22 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       }
       return out
     }
+    let cachedLimit: number | undefined
+    let cachedBudget: number | undefined
+    let cachedCombinations: ReadonlyArray<readonly [optional: number, repeat: number, cost: number]> = []
+    let cachedPossible: ReadonlyArray<readonly [optional: number, repeat: number, cost: number]> = []
+    const possibleCombinations = (limit: number, budget: number) => {
+      if (limit !== cachedLimit) {
+        cachedLimit = limit
+        cachedBudget = undefined
+        cachedCombinations = combinations(limit)
+      }
+      if (budget !== cachedBudget) {
+        cachedBudget = budget
+        cachedPossible = cachedCombinations.filter(([, , cost]) => cost <= budget)
+      }
+      return cachedPossible
+    }
     return Model.makeCompiled(
       dependencies,
       () => {
@@ -1306,7 +1334,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return possible.length === 0 ? infinity : Math.min(...possible.map(([, , cost]) => cost))
       },
       (state) => {
-        const possible = combinations(state.size).filter(([, , cost]) => cost <= state.budget.remaining)
+        const possible = possibleCombinations(state.size, state.budget.remaining)
         if (possible.length === 0) return Model.discarded
         const [optionalCount, repeatCount] = possible[Model.randomLength(state, 0, possible.length - 1)]
         const selected = [
@@ -1549,16 +1577,14 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
       }
     }
     const target = recur(SchemaAST.toType(link.to), path)
-    const decodeDeclaration = Schema.decodeUnknownEffect(Schema.make(ast)) as (
-      input: unknown
-    ) => Effect.Effect<unknown, Schema.SchemaError>
+    const decodeDeclaration = SchemaParser.decodeUnknownEffect(Schema.make(ast))
     const decode = (value: unknown): Effect.Effect<Option.Option<unknown>> => {
       const transformed = link.transformation._tag === "Transformation"
         ? link.transformation.decode.run(Option.some(value), SchemaAST.defaultParseOptions)
         : link.transformation.decode(Effect.succeed(Option.some(value)), SchemaAST.defaultParseOptions)
-      return Effect.flatMapEager(Effect.option(transformed), (outer) => {
+      return Effect.flatMapEager(optionEager(transformed), (outer) => {
         if (Option.isNone(outer) || Option.isNone(outer.value)) return Effect.succeedNone
-        return Effect.option(decodeDeclaration(outer.value.value))
+        return optionEager(decodeDeclaration(outer.value.value))
       }) as Effect.Effect<Option.Option<unknown>>
     }
     return Model.makeCompiled(
