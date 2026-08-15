@@ -281,6 +281,13 @@ required for compositions such as multiple regular-expression patterns: the merg
 generation without being a constructive representation of their conjunction. No exactness marker or built-in filter
 registry is introduced.
 
+For multiple regular-expression hints, native generation gives every pattern supported by the private compiler equal
+weight as a constructive candidate and retains every pattern as a residual check. Unsupported patterns remain residual
+checks, and ordinary string generation is used only when no pattern is supported. It does not search for the most
+selective pattern or construct an exact intersection. Likewise, declaration Links interpret ordered bounds according
+to the canonical `Order` for which they were written; attaching the same hint with an incompatible custom `Order` is
+the Schema author's responsibility.
+
 ## Deep module seams
 
 The design has one external seam and one Schema-owned seam:
@@ -1144,6 +1151,20 @@ native and fast-check fixtures remain 34.41 KB and 78.96 KB respectively, and ev
 runner. Its pure, Effectful, live, and layered property helpers accept native check options through `arbitrary`.
 Supplying a fast-check arbitrary, mixing it with a Schema, or explicitly supplying `fastCheck` options retains the
 legacy path during coexistence.
+
+A native parity catalog now checks the legacy suite's representative primitive and structural ASTs, canonical
+constraints, built-in declarations, and canonical declaration routes through `Arbitrary.schema` and `check`. The
+catalog exposed two progressive-size deadlocks: explicit Record property minima could leave string keys at size zero,
+and collection declaration Links with positive minima could leave repeated entry generators at size zero. Record keys
+now receive at least the requested index cardinality, and repeated Array elements receive at least the requested repeat
+cardinality. This keeps explicit minima productive without declaration-specific generation paths.
+
+The tranche-specific 31-fixture bundle comparison against its pre-parity `HEAD` left every ordinary fixture unchanged.
+The materialized native fixture moved from 34.45 KB to 34.50 KB (`+0.05 KB`, `+0.13%`), while the materialized
+fast-check fixture remained 79.00 KB. Of the 17 native runtime-performance fixtures, 15 were statistically
+inconclusive and two reported improvements; none reported a regression. The directly affected unique-array fixture
+had a `-0.12%` point estimate with a `-0.59%...+4.85%` bootstrap interval. The Record-minimum path has no meaningful
+base comparison because the base implementation exhausted without completing its first progressive run.
 
 ## Holistic follow-up after parity
 

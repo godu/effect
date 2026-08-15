@@ -940,19 +940,28 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         )
       case "String": {
         const patternConstraints = constraint?.patterns ?? []
-        let pattern: Regexp.Compiled | undefined
+        const patterns: Array<Regexp.Compiled> = []
         for (const constraint of patternConstraints) {
-          pattern = Regexp.compile(constraint)
-          if (pattern !== undefined) break
+          const pattern = Regexp.compile(constraint)
+          if (pattern !== undefined) patterns.push(pattern)
         }
         const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "string")
-        if (pattern !== undefined && maximum !== undefined && !pattern.hasLengthBetween(minimum, maximum)) {
-          throw arbitraryError("string constraints", path)
+        if (maximum !== undefined) {
+          for (const pattern of patterns) {
+            if (!pattern.hasLengthBetween(minimum, maximum)) {
+              throw arbitraryError("string constraints", path)
+            }
+          }
         }
         return Model.makeCompiled(
           [],
           () => 0,
           (state) => {
+            const pattern = patterns.length === 0
+              ? undefined
+              : patterns.length === 1
+              ? patterns[0]
+              : patterns[Model.randomIndex(state, patterns.length)]
             const currentMaximum = Math.max(minimum, pattern?.minimumLength ?? 0, state.size)
             const upper = maximum === undefined ? currentMaximum : Math.min(maximum, currentMaximum)
             let value: string | undefined
@@ -1250,9 +1259,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             tailCount: tail.length,
             minimum
           }, state.shrinks))
+        // Explicit collection minima must stay productive while progressive checks are still at size zero.
+        const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
         if (constraint?.unique !== true) {
           return Model.mapComputation(
-            generateSamples(selected, state),
+            generateSamples(selected, itemState),
             (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
           )
         }
@@ -1293,7 +1304,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
               reserved -= child.minCost
               budget = state.budget.remaining
             }
-            const generatedChild = generateWithReservedBudget(child, state, reserved)
+            const generatedChild = generateWithReservedBudget(child, itemState, reserved)
             if (Model.isAttempt(generatedChild)) {
               const attempt = generatedChild
               if (attempt._tag === "Discarded") return Model.discarded
@@ -1413,8 +1424,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 const index = eligible[Model.randomIndex(state, eligible.length)]
                 const budget = state.budget.remaining
                 const reservedAfterKey = index.value.minCost + futureReserved
+                // Multiple required index entries need enough key diversity before progressive size can advance.
+                const keyState = state.size >= indexCount ? state : { ...state, size: indexCount }
                 let keyAttempt = yield* Model.toEffectGeneration(
-                  generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                  generateWithReservedBudget(index.parameter, keyState, reservedAfterKey)
                 )
                 let keySample: Model.Sample<PropertyKey>
                 let retries = 0
@@ -1427,7 +1440,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                   if (retries++ >= 10) return Model.discarded
                   state.budget.remaining = budget
                   keyAttempt = yield* Model.toEffectGeneration(
-                    generateWithReservedBudget(index.parameter, state, reservedAfterKey)
+                    generateWithReservedBudget(index.parameter, keyState, reservedAfterKey)
                   )
                 }
                 const value = yield* Model.toEffectGeneration(

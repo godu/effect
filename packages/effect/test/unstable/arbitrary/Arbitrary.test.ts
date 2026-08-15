@@ -29,6 +29,22 @@ const makeSuspendChain = (count: number): Schema.Codec<unknown> => {
   return schema
 }
 
+interface SchemaCatalogEntry {
+  readonly name: string
+  readonly schema: Schema.Top
+}
+
+const verifySchemaCatalog = Effect.fnUntraced(function*(entries: ReadonlyArray<SchemaCatalogEntry>) {
+  for (const entry of entries) {
+    const result = yield* Arbitrary.check(Arbitrary.schema(entry.schema), Schema.is(entry.schema), {
+      runs: 20,
+      maxDiscards: 200,
+      seed: `schema-catalog:${entry.name}`
+    })
+    assert.strictEqual(result._tag, "Passed", entry.name)
+  }
+})
+
 describe("Arbitrary", () => {
   describe("schema", () => {
     it.effect("generates deterministic samples and pushes constraints into primitive constructors", () =>
@@ -404,20 +420,34 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every((value) => value.length === 8 || value.length === 10 || value.length === 12))
       }))
 
-    it.effect("generates from the first supported pattern and validates against every pattern", () =>
+    it.effect("uses every supported pattern as a candidate and validates against every pattern", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(
-          Schema.isPattern(/^(?=a)a$/),
-          Schema.isPattern(/^a$/),
-          Schema.isPattern(/^[a-z]$/)
+          Schema.isPattern(/^[^A-Z]*$/),
+          Schema.isPattern(/^0x[0-9a-f]{40}$/)
         )
         const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
           count: 20,
-          maxDiscards: 0,
+          maxDiscards: 200,
           seed: "multiple-patterns"
         })
 
         assert.isTrue(values.every(Schema.is(schema)))
+      }))
+
+    it.effect("keeps unsupported patterns as residual filters", () =>
+      Effect.gen(function*() {
+        const schema = Schema.String.check(
+          Schema.isPattern(/^(?=a)a$/),
+          Schema.isPattern(/^a$/)
+        )
+        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+          count: 20,
+          maxDiscards: 0,
+          seed: "unsupported-pattern-candidate"
+        })
+
+        assert.deepStrictEqual(values, globalThis.Array.from({ length: 20 }, () => "a"))
       }))
 
     it.effect("bounds fallback filtering for unsupported regular expression constructs", () =>
@@ -649,6 +679,18 @@ describe("Arbitrary", () => {
           Schema.Record(Schema.String, Schema.Null).check(Schema.isMaxProperties(10)),
           (value) => Object.keys(value).length
         )
+      }))
+
+    it.effect("starts progressive checks for Records with an explicit minimum property count", () =>
+      Effect.gen(function*() {
+        const schema = Schema.Record(Schema.String, Schema.Number).check(Schema.isMinProperties(2))
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), Schema.is(schema), {
+          runs: 20,
+          maxDiscards: 200,
+          seed: "record-min-properties-progressive"
+        })
+
+        assert.strictEqual(result._tag, "Passed")
       }))
 
     it.effect("injects the approved JavaScript String edge corpus", () =>
@@ -1261,6 +1303,183 @@ describe("Arbitrary", () => {
           assert.isTrue(values.every((value) => size(value) === 3))
         }
       }))
+
+    describe("legacy schema catalog parity", () => {
+      it.effect("derives primitive and structural schemas", () => {
+        const enumValues = {
+          Apple: "apple",
+          Banana: "banana",
+          Cantaloupe: 3
+        } as const
+        class CatalogClass extends Schema.Class<CatalogClass>("ArbitraryCatalogClass")({
+          value: Schema.String
+        }) {}
+        return verifySchemaCatalog([
+          { name: "Any", schema: Schema.Any },
+          { name: "Unknown", schema: Schema.Unknown },
+          { name: "Void", schema: Schema.Void },
+          { name: "Undefined", schema: Schema.Undefined },
+          { name: "Null", schema: Schema.Null },
+          { name: "String", schema: Schema.String },
+          { name: "Number", schema: Schema.Number },
+          { name: "Boolean", schema: Schema.Boolean },
+          { name: "BigInt", schema: Schema.BigInt },
+          { name: "Symbol", schema: Schema.Symbol },
+          { name: "UniqueSymbol", schema: Schema.UniqueSymbol(Symbol.for("arbitrary-parity")) },
+          { name: "ObjectKeyword", schema: Schema.ObjectKeyword },
+          { name: "Literals", schema: Schema.Literals(["a", 1, true, 1n]) },
+          { name: "Enum", schema: Schema.Enum(enumValues) },
+          {
+            name: "TemplateLiteral",
+            schema: Schema.TemplateLiteral(["user_", Schema.String.check(Schema.isUUID())])
+          },
+          { name: "Union", schema: Schema.Union([Schema.String, Schema.Number]) },
+          {
+            name: "Tuple",
+            schema: Schema.Tuple([Schema.String, Schema.optionalKey(Schema.Number)])
+          },
+          {
+            name: "TupleWithRest",
+            schema: Schema.TupleWithRest(Schema.Tuple([Schema.Boolean]), [Schema.Number, Schema.String])
+          },
+          { name: "Array", schema: Schema.Array(Schema.String) },
+          {
+            name: "Struct",
+            schema: Schema.Struct({
+              required: Schema.String,
+              optional: Schema.optionalKey(Schema.Number)
+            })
+          },
+          { name: "Record(String)", schema: Schema.Record(Schema.String, Schema.Number) },
+          { name: "Record(Symbol)", schema: Schema.Record(Schema.Symbol, Schema.Number) },
+          { name: "Class", schema: CatalogClass },
+          {
+            name: "StructWithRest",
+            schema: Schema.StructWithRest(
+              Schema.Struct({ required: Schema.Number }),
+              [Schema.Record(Schema.String, Schema.Number)]
+            )
+          }
+        ])
+      })
+
+      it.effect("derives schemas with canonical constraints", () =>
+        verifySchemaCatalog([
+          {
+            name: "String length",
+            schema: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(4))
+          },
+          { name: "String starts with", schema: Schema.String.check(Schema.isStartsWith("a.b")) },
+          { name: "String ends with", schema: Schema.String.check(Schema.isEndsWith("a+b")) },
+          { name: "String includes", schema: Schema.String.check(Schema.isIncludes("[")) },
+          { name: "Finite", schema: Schema.Finite },
+          { name: "Int32", schema: Schema.Number.check(Schema.isInt32()) },
+          {
+            name: "Int fractional bounds",
+            schema: Schema.Int.check(Schema.isBetween({
+              minimum: 1.2,
+              maximum: 10.8,
+              exclusiveMinimum: true,
+              exclusiveMaximum: true
+            }))
+          },
+          {
+            name: "BigInt bounds",
+            schema: Schema.BigInt.check(Schema.isBetweenBigInt({
+              minimum: 0n,
+              maximum: 10n,
+              exclusiveMinimum: true,
+              exclusiveMaximum: true
+            }))
+          },
+          {
+            name: "Date bounds",
+            schema: Schema.Date.check(Schema.isBetweenDate({
+              minimum: new globalThis.Date(0),
+              maximum: new globalThis.Date(10),
+              exclusiveMinimum: true,
+              exclusiveMaximum: true
+            }))
+          },
+          {
+            name: "BigDecimal bounds",
+            schema: Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+              minimum: BigDecimal.fromStringUnsafe("1.01"),
+              maximum: BigDecimal.fromStringUnsafe("1.02"),
+              exclusiveMinimum: true,
+              exclusiveMaximum: true
+            }))
+          },
+          {
+            name: "Array length",
+            schema: Schema.Array(Schema.String).check(Schema.isLengthBetween(2, 4))
+          },
+          {
+            name: "UniqueArray",
+            schema: Schema.UniqueArray(Schema.String).check(Schema.isMaxLength(2))
+          },
+          {
+            name: "Record properties",
+            schema: Schema.Record(Schema.String, Schema.Number).check(Schema.isPropertiesLengthBetween(2, 4))
+          },
+          {
+            name: "Struct properties",
+            schema: Schema.Struct({
+              a: Schema.optionalKey(Schema.String),
+              b: Schema.optionalKey(Schema.String),
+              c: Schema.optionalKey(Schema.String)
+            }).check(Schema.isPropertiesLengthBetween(2, 2))
+          },
+          {
+            name: "ReadonlyMap size",
+            schema: Schema.ReadonlyMap(Schema.String, Schema.Number).check(Schema.isSizeBetween(2, 4))
+          }
+        ]))
+
+      it.effect("derives built-in and canonical declarations", () =>
+        verifySchemaCatalog([
+          { name: "Json", schema: Schema.Json },
+          { name: "MutableJson", schema: Schema.MutableJson },
+          { name: "Date", schema: Schema.Date },
+          { name: "URL", schema: Schema.URL },
+          { name: "URLSearchParams", schema: Schema.URLSearchParams },
+          { name: "RegExp", schema: Schema.RegExp },
+          { name: "Duration", schema: Schema.Duration },
+          { name: "BigDecimal", schema: Schema.BigDecimal },
+          { name: "DateTimeUtc", schema: Schema.DateTimeUtc },
+          { name: "TimeZoneOffset", schema: Schema.TimeZoneOffset },
+          { name: "TimeZoneNamed", schema: Schema.TimeZoneNamed },
+          { name: "TimeZone", schema: Schema.TimeZone },
+          { name: "DateTimeZoned", schema: Schema.DateTimeZoned },
+          { name: "Uint8Array", schema: Schema.Uint8Array },
+          { name: "UnknownFromJsonString", schema: Schema.UnknownFromJsonString },
+          { name: "Option", schema: Schema.Option(Schema.String) },
+          { name: "Result", schema: Schema.Result(Schema.Number, Schema.String) },
+          { name: "ReadonlySet", schema: Schema.ReadonlySet(Schema.Number) },
+          { name: "ReadonlyMap", schema: Schema.ReadonlyMap(Schema.String, Schema.Number) },
+          { name: "HashSet", schema: Schema.HashSet(Schema.Number) },
+          { name: "HashMap", schema: Schema.HashMap(Schema.String, Schema.Number) },
+          { name: "Chunk", schema: Schema.Chunk(Schema.Number) },
+          { name: "Redacted", schema: Schema.Redacted(Schema.String, { label: "password" }) },
+          { name: "Cause", schema: Schema.Cause(Schema.String, Schema.String) },
+          { name: "Exit", schema: Schema.Exit(Schema.Number, Schema.String, Schema.String) }
+        ]))
+
+      it("rejects uninhabited structural schemas", () => {
+        assert.throws(() => Arbitrary.schema(Schema.Never), /Unable to derive an arbitrary for Never/)
+        assert.throws(
+          () => Arbitrary.schema(Schema.Array(Schema.String).check(Schema.isMinLength(2), Schema.isMaxLength(1))),
+          /Unable to derive an arbitrary for array constraints/
+        )
+        assert.throws(
+          () =>
+            Arbitrary.schema(
+              Schema.Struct({ required: Schema.String }).check(Schema.isMaxProperties(0))
+            ),
+          /Unable to derive an arbitrary for object property constraints/
+        )
+      })
+    })
 
     it.effect("generates recursive schemas with a finite path", () =>
       Effect.gen(function*() {
