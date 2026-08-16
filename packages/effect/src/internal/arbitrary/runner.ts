@@ -1,3 +1,4 @@
+import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
 import { pipeArguments } from "../../Pipeable.ts"
@@ -108,18 +109,16 @@ function rotateLeft(value: number, shift: number): number {
   return (value << shift | value >>> (32 - shift)) >>> 0
 }
 
-function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRandom {
-  // This provides the same per-run isolation targeted by fast-check v4.9.0's jump-before-toss strategy (MIT), while
-  // deriving the attempt state directly so replay can jump to it without executing preceding attempts.
-  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/runner/Tosser.ts
-  const attemptLow = attempt >>> 0
-  const attemptHigh = Math.floor(attempt / 0x100000000) >>> 0
-  let state0 = mix32(seed.first ^ attemptLow ^ Math.imul(attemptHigh, 0x9e3779b9))
-  let state1 = mix32(seed.second ^ attemptHigh ^ Math.imul(attemptLow, 0x85ebca6b))
-  let state2 = mix32(seed.first ^ attemptHigh ^ Math.imul(attemptLow, 0xc2b2ae35) ^ 0x243f6a88)
-  let state3 = mix32(seed.second ^ attemptLow ^ Math.imul(attemptHigh, 0x27d4eb2f) ^ 0xb7e15162)
-  if ((state0 | state1 | state2 | state3) === 0) state0 = 0x9e3779b9
-
+function makeGenerationRandom(
+  initialState0: number,
+  initialState1: number,
+  initialState2: number,
+  initialState3: number
+): Model.GenerationRandom {
+  let state0 = initialState0
+  let state1 = initialState1
+  let state2 = initialState2
+  let state3 = initialState3
   // xoshiro128** 1.1 by David Blackman and Sebastiano Vigna, dedicated to the public domain.
   // https://prng.di.unimi.it/xoshiro128starstar.c
   const nextUint32 = () => {
@@ -140,8 +139,31 @@ function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRa
   }
   return {
     nextUint32,
-    nextDoubleUnsafe
+    nextDoubleUnsafe,
+    clone: () => makeGenerationRandom(state0, state1, state2, state3),
+    copyFrom: (source) => {
+      const snapshot = source.snapshot()
+      state0 = snapshot[0]
+      state1 = snapshot[1]
+      state2 = snapshot[2]
+      state3 = snapshot[3]
+    },
+    snapshot: () => [state0, state1, state2, state3]
   }
+}
+
+function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRandom {
+  // This provides the same per-run isolation targeted by fast-check v4.9.0's jump-before-toss strategy (MIT), while
+  // deriving the attempt state directly so replay can jump to it without executing preceding attempts.
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/runner/Tosser.ts
+  const attemptLow = attempt >>> 0
+  const attemptHigh = Math.floor(attempt / 0x100000000) >>> 0
+  let state0 = mix32(seed.first ^ attemptLow ^ Math.imul(attemptHigh, 0x9e3779b9))
+  const state1 = mix32(seed.second ^ attemptHigh ^ Math.imul(attemptLow, 0x85ebca6b))
+  const state2 = mix32(seed.first ^ attemptHigh ^ Math.imul(attemptLow, 0xc2b2ae35) ^ 0x243f6a88)
+  const state3 = mix32(seed.second ^ attemptLow ^ Math.imul(attemptHigh, 0x27d4eb2f) ^ 0xb7e15162)
+  if ((state0 | state1 | state2 | state3) === 0) state0 = 0x9e3779b9
+  return makeGenerationRandom(state0, state1, state2, state3)
 }
 
 const generateAttemptRaw = <A>(
@@ -239,6 +261,111 @@ export function union(members: ReadonlyArray<Arbitrary<any>>): Arbitrary<any> {
     Math.min(...generators.map((generator) => generator.minCost)),
     (state) => Model.generateUnion(generators, state)
   ))
+}
+
+function makeGenerationState(
+  state: Model.GenerationState,
+  random: Model.GenerationRandom,
+  remaining: number
+): Model.GenerationState {
+  return {
+    size: state.size,
+    shrinks: state.shrinks,
+    biasFactor: state.biasFactor,
+    random,
+    budget: { remaining }
+  }
+}
+
+function flatMapSourcePull<A, B>(
+  source: Pull.Pull<Model.Sample<A>>,
+  f: (value: A) => Arbitrary<B>,
+  checkpoint: Model.GenerationRandom,
+  state: Model.GenerationState,
+  residual: number
+): Pull.Pull<Model.Sample<B>> {
+  const queue: Array<Pull.Pull<Model.Sample<A>>> = [source]
+  const loop = (): Pull.Pull<Model.Sample<B>> =>
+    Effect.suspend(() => {
+      const current = queue[0]
+      if (current === undefined) return Cause.done()
+      return Pull.matchEffect(current, {
+        onFailure: Effect.failCause,
+        onDone: () => {
+          queue.shift()
+          return loop()
+        },
+        onSuccess: (sourceSample) => {
+          const target = f(sourceSample.value).gen
+          const targetState = makeGenerationState(state, checkpoint.clone(), residual + target.minCost)
+          return Effect.flatMapEager(Model.toEffectGeneration(target.generate(targetState)), (attempt) => {
+            if (attempt._tag === "Discarded") {
+              if (sourceSample.shrinks !== undefined) queue.unshift(sourceSample.shrinks)
+              return loop()
+            }
+            return Effect.succeed(flatMapSample(sourceSample, attempt, f, checkpoint, state, residual))
+          })
+        }
+      })
+    })
+  return loop()
+}
+
+function flatMapSample<A, B>(
+  source: Model.Sample<A>,
+  target: Model.Sample<B>,
+  f: (value: A) => Arbitrary<B>,
+  checkpoint: Model.GenerationRandom,
+  state: Model.GenerationState,
+  residual: number
+): Model.Sample<B> {
+  // Source-first shrinking followed by permanently closing the source after a dependent shrink follows fast-check
+  // v4.9.0's ChainArbitrary topology (MIT).
+  // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/arbitrary/definition/Arbitrary.ts#L147-L228
+  if (source.shrinks === undefined) return target
+  const sourceShrinks = flatMapSourcePull(source.shrinks, f, checkpoint, state, residual)
+  const shrinks = target.shrinks === undefined
+    ? sourceShrinks
+    : Model.concatPulls([sourceShrinks, target.shrinks])
+  return Model.makeSample(target.value, shrinks)
+}
+
+/** @internal */
+export function flatMap<A, B>(self: Arbitrary<A>, f: (value: A) => Arbitrary<B>): Arbitrary<B> {
+  return make(Model.makeGenerator(self.gen.minCost, (state) => {
+    if (!state.shrinks) {
+      return Model.flatMapGeneration(self.gen.generate(state), (source) => {
+        if (source._tag === "Discarded") return source
+        const target = f(source.value).gen
+        const residual = state.budget.remaining
+        state.budget.remaining = residual + target.minCost
+        return Model.mapGeneration(target.generate(state), (attempt) => {
+          state.budget.remaining = Math.min(residual, state.budget.remaining)
+          return attempt
+        })
+      })
+    }
+
+    // Unlike fast-check's pre-source checkpoint, Effect captures the isolated PRNG after source generation so a
+    // smaller source changes the dependent constraint without rerolling its choices.
+    const sourceState = makeGenerationState(state, state.random.clone(), state.budget.remaining)
+    return Model.flatMapGeneration(self.gen.generate(sourceState), (source) => {
+      if (source._tag === "Discarded") {
+        state.random.copyFrom(sourceState.random)
+        state.budget.remaining = sourceState.budget.remaining
+        return source
+      }
+      const target = f(source.value).gen
+      const residual = sourceState.budget.remaining
+      const checkpoint = sourceState.random.clone()
+      const targetState = makeGenerationState(state, checkpoint.clone(), residual + target.minCost)
+      return Model.mapGeneration(target.generate(targetState), (attempt) => {
+        state.random.copyFrom(targetState.random)
+        state.budget.remaining = Math.min(residual, targetState.budget.remaining)
+        return attempt._tag === "Discarded" ? attempt : flatMapSample(source, attempt, f, checkpoint, state, residual)
+      })
+    })
+  }))
 }
 
 /** @internal */

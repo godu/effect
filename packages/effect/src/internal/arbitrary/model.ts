@@ -28,6 +28,9 @@ export type Generation<A> = Computation<Attempt<A>>
 export interface GenerationRandom {
   readonly nextUint32: () => number
   readonly nextDoubleUnsafe: () => number
+  readonly clone: () => GenerationRandom
+  readonly copyFrom: (source: GenerationRandom) => void
+  readonly snapshot: () => readonly [number, number, number, number]
 }
 
 /** @internal */

@@ -20,6 +20,18 @@ const seed = 42
 const recursiveSeed = 188
 const namedTimeZones = ["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"] as const
 
+interface FlatMapValue {
+  readonly length: number
+  readonly values: ReadonlyArray<number>
+}
+
+const flatMapTargets = globalThis.Array.from({ length: 8 }, (_, index) => {
+  const length = index + 1
+  return FastCheck.array(FastCheck.integer({ min: -1_000, max: 1_000 }), { minLength: length, maxLength: length })
+    .map((values): FlatMapValue => ({ length, values }))
+})
+const flatMapArbitrary = FastCheck.integer({ min: 1, max: 8 }).chain((length) => flatMapTargets[length - 1])
+
 const scoreArbitrary = FastCheck.oneof(
   FastCheck.constant(Option.none()),
   FastCheck.integer({ min: 0, max: 100 }).map(Option.some)
@@ -253,6 +265,40 @@ export const schemaLocalArbitrarySample128 = () => {
     validate: (values: ReadonlyArray<{ readonly name: string; readonly age: number }>) => {
       assert.equal(values.length, 128)
       assert.equal(values.every((value) => value.name === "Ada" || value.name === "Grace"), true)
+    }
+  }
+}
+
+export const flatMapSample128 = () => ({
+  run: () => FastCheck.sample(flatMapArbitrary, { numRuns: 128, seed }),
+  validate: (values: ReadonlyArray<FlatMapValue>) => {
+    assert.equal(values.length, 128)
+    assert.equal(values.every((value) => value.values.length === value.length), true)
+  }
+})
+
+export const flatMapCheckFalsifyAndShrink = () => {
+  const property = FastCheck.property(flatMapArbitrary, () => false)
+  return {
+    run: () => FastCheck.check(property, { numRuns: 1, seed }),
+    validate: (result: FastCheck.RunDetails<[FlatMapValue]>) => {
+      assert.equal(result.failed, true)
+      assert.equal(result.counterexample?.[0].length, 1)
+      assert.equal(result.counterexample?.[0].values.length, 1)
+    }
+  }
+}
+
+export const flatMapCheckReplay = () => {
+  const property = FastCheck.property(flatMapArbitrary, () => false)
+  const initial = FastCheck.check(property, { numRuns: 1, seed })
+  assert.equal(initial.failed, true)
+  return {
+    run: () => FastCheck.check(property, { numRuns: 1, seed: initial.seed, path: initial.counterexamplePath }),
+    validate: (result: FastCheck.RunDetails<[FlatMapValue]>) => {
+      assert.equal(result.failed, true)
+      assert.equal(result.counterexample?.[0].length, 1)
+      assert.equal(result.counterexample?.[0].values.length, 1)
     }
   }
 }

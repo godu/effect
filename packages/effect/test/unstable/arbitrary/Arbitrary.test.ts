@@ -2282,6 +2282,296 @@ describe("Arbitrary", () => {
         }
       }))
 
+    it.effect("keeps root generation stable and shrinks dependent lengths consistently", () =>
+      Effect.gen(function*() {
+        const source = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })))
+        const item = Schema.Int.check(Schema.isBetween({ minimum: -1_000, maximum: 1_000 }))
+        const dependents = globalThis.Array.from({ length: 8 }, (_, index) => {
+          const length = index + 1
+          return Arbitrary.schema(
+            Schema.Array(item).check(Schema.isMinLength(length), Schema.isMaxLength(length))
+          ).pipe(Arbitrary.map((values) => ({ length, values })))
+        })
+        const arbitrary = source.pipe(Arbitrary.flatMap((length) => dependents[length - 1]))
+
+        const Dependent = Schema.Struct({
+          length: Schema.Int,
+          values: Schema.Array(item)
+        }).annotate({ arbitrary: () => arbitrary })
+        const composite = Arbitrary.schema(Schema.Struct({ dependent: Dependent, after: Schema.Int }))
+        const sampled = yield* Arbitrary.sampleEffect(composite, { count: 1, seed: 3, size: 8 })
+        let checked: {
+          readonly dependent: { readonly length: number; readonly values: ReadonlyArray<number> }
+          readonly after: number
+        } | undefined
+        yield* Arbitrary.checkEffect(composite, (value) => {
+          checked = value
+          return true
+        }, { runs: 1, seed: 3, size: 8 })
+        assert.deepStrictEqual(sampled[0], checked)
+
+        let failures = 0
+        for (let seed = 0; seed < 32; seed++) {
+          const result = yield* Arbitrary.checkEffect(arbitrary, (value) => value.values[0] >= 0, {
+            runs: 1,
+            seed,
+            size: 8
+          })
+          if (result._tag === "Falsified") {
+            failures++
+            assert.strictEqual(result.counterexample.length, 1)
+          }
+        }
+        assert.isAbove(failures, 0)
+      }))
+
+    it.effect("shrinks the source first and closes it after selecting a dependent shrink", () =>
+      Effect.gen(function*() {
+        const integers = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })))
+        const sources: Array<number> = []
+        const arbitrary = Arbitrary.flatMap(integers, (source) => {
+          sources.push(source)
+          return Arbitrary.map(integers, (target) => ({ source, target }))
+        })
+        let initial: { readonly source: number; readonly target: number } | undefined
+        const result = yield* Arbitrary.checkEffect(arbitrary, (value) => {
+          if (initial === undefined) {
+            initial = value
+            return false
+          }
+          return value.source !== initial.source || value.target === initial.target
+        }, { runs: 1, seed: 0, size: 10 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.deepStrictEqual(result.initialInput, { source: 2, target: 15 })
+          assert.deepStrictEqual(result.counterexample, { source: 2, target: 1 })
+          assert.strictEqual(result.shrinks, 1)
+          assert.deepStrictEqual(sources, [2, 1])
+        }
+      }))
+
+    it.effect("replays source, dependent, and promoted flatMap shrink paths", () =>
+      Effect.gen(function*() {
+        const integers = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })))
+        const cases: ReadonlyArray<{
+          readonly arbitrary: Arbitrary.Arbitrary<number>
+          readonly property: (value: number) => boolean
+          readonly counterexample: number
+        }> = [
+          {
+            arbitrary: Arbitrary.flatMap(integers, (value) => Arbitrary.schema(Schema.Literal(value))),
+            property: (value) => value < 10,
+            counterexample: 10
+          },
+          {
+            arbitrary: Arbitrary.flatMap(Arbitrary.schema(Schema.Null), () => integers),
+            property: (value) => value < 10,
+            counterexample: 10
+          },
+          {
+            arbitrary: Arbitrary.flatMap(integers, (value) =>
+              value === 100 || value === 26
+                ? Arbitrary.schema(Schema.Literal(value))
+                : Arbitrary.filter(Arbitrary.schema(Schema.Literal(value)), () => false)),
+            property: () => false,
+            counterexample: 26
+          }
+        ]
+
+        for (const test of cases) {
+          const result = yield* Arbitrary.checkEffect(test.arbitrary, test.property, {
+            runs: 1,
+            seed: 47,
+            size: 10
+          })
+          assert.strictEqual(result._tag, "Falsified")
+          if (result._tag !== "Falsified") continue
+          assert.strictEqual(result.initialInput, 100)
+          assert.strictEqual(result.counterexample, test.counterexample)
+
+          const replayed = yield* Arbitrary.checkEffect(test.arbitrary, test.property, { replay: result.replay })
+          assert.strictEqual(replayed._tag, "Falsified")
+          if (replayed._tag === "Falsified") {
+            assert.strictEqual(replayed.initialInput, result.initialInput)
+            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.deepStrictEqual(replayed.failure, result.failure)
+            assert.strictEqual(replayed.shrinks, result.shrinks)
+          }
+        }
+      }))
+
+    it.effect("bounds initial flatMap discards and terminates an all-discard shrink frontier", () =>
+      Effect.gen(function*() {
+        const rejected = Arbitrary.filter(Arbitrary.schema(Schema.Literal("value")), () => false)
+        const roots = [
+          Arbitrary.flatMap(rejected, () => Arbitrary.schema(Schema.Literal("target"))),
+          Arbitrary.flatMap(Arbitrary.schema(Schema.Literal("source")), () => rejected)
+        ]
+        for (const arbitrary of roots) {
+          const sampled = yield* Effect.result(Arbitrary.sampleEffect(arbitrary, {
+            count: 1,
+            maxDiscards: 2,
+            seed: "flat-map-discard"
+          }))
+          const checked = yield* Arbitrary.checkEffect(arbitrary, () => true, {
+            runs: 1,
+            maxDiscards: 2,
+            seed: "flat-map-discard"
+          })
+          assert.isTrue(Result.isFailure(sampled))
+          if (Result.isFailure(sampled)) {
+            assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          }
+          assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+        }
+
+        const integers = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })))
+        const frontier = Arbitrary.flatMap(integers, (value) =>
+          value === 10
+            ? Arbitrary.schema(Schema.Literal(value))
+            : Arbitrary.filter(Arbitrary.schema(Schema.Literal(value)), () => false))
+        const result = yield* Arbitrary.checkEffect(frontier, () => false, { runs: 1, seed: 47, size: 10 })
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 10)
+          assert.strictEqual(result.counterexample, 10)
+          assert.strictEqual(result.shrinks, 0)
+        }
+      }))
+
+    it.effect("shares recursive fuel and tops up only the dependent minimum cost", () =>
+      Effect.gen(function*() {
+        interface Chain {
+          readonly next: Chain | null
+        }
+        const Chain: Schema.Codec<Chain> = Schema.Struct({
+          next: Schema.suspend(() => Schema.Union([Schema.Null, Chain]))
+        })
+        const chain = Arbitrary.schema(Chain)
+        const triple = chain.pipe(
+          Arbitrary.flatMap((first) =>
+            chain.pipe(
+              Arbitrary.flatMap((second) => chain.pipe(Arbitrary.map((third) => [first, second, third] as const)))
+            )
+          )
+        )
+        const chainSize = (value: Chain): number => 1 + (value.next === null ? 0 : chainSize(value.next))
+
+        const values = yield* Arbitrary.sampleEffect(triple, {
+          count: 512,
+          maxDiscards: 0,
+          seed: 42,
+          size: 8
+        })
+        assert.isTrue(values.every((value) => value.reduce((total, item) => total + chainSize(item), 0) - 3 <= 8))
+
+        let checked = 0
+        const result = yield* Arbitrary.checkEffect(triple, (value) => {
+          checked++
+          return value.reduce((total, item) => total + chainSize(item), 0) - 3 <= 8
+        }, { runs: 128, seed: 42, size: 8 })
+        assert.deepStrictEqual(result, { _tag: "Passed", runs: 128, discards: 0 })
+        assert.strictEqual(checked, 128)
+
+        const minimum = yield* Arbitrary.sampleEffect(triple, {
+          count: 64,
+          maxDiscards: 0,
+          seed: 42,
+          size: 0
+        })
+        assert.isTrue(minimum.every((value) => value.every((item) => chainSize(item) === 1)))
+      }))
+
+    it.effect("supports mutually recursive Schema Arbitraries as source and dependent", () =>
+      Effect.gen(function*() {
+        interface A {
+          readonly _tag: "A"
+          readonly next: B | null
+        }
+        interface B {
+          readonly _tag: "B"
+          readonly next: A | null
+        }
+        const A: Schema.Codec<A> = Schema.Struct({
+          _tag: Schema.Literal("A"),
+          next: Schema.suspend(() => Schema.Union([Schema.Null, B]))
+        })
+        const B: Schema.Codec<B> = Schema.Struct({
+          _tag: Schema.Literal("B"),
+          next: Schema.suspend(() => Schema.Union([Schema.Null, A]))
+        })
+        const arbitrary = Arbitrary.flatMap(
+          Arbitrary.schema(A),
+          (left) => Arbitrary.map(Arbitrary.schema(B), (right) => [left, right] as const)
+        )
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
+          count: 30,
+          maxDiscards: 0,
+          seed: "flat-map-mutual-recursion",
+          size: 5
+        })
+
+        assert.isTrue(values.every(([left, right]) => Schema.is(A)(left) && Schema.is(B)(right)))
+      }))
+
+    it.effect("keeps dependent generation interruptible", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const schema = Schema.declare<number>((input): input is number => typeof input === "number", {
+          toCodecArbitrary: () =>
+            Schema.link<number>()(
+              Schema.Literal(1),
+              SchemaTransformation.transformOrFail<number, 1>({
+                decode: () => {
+                  Deferred.doneUnsafe(started, Effect.void)
+                  return Effect.never
+                },
+                encode: () => Effect.succeed(1)
+              })
+            )
+        })
+        const arbitrary = Arbitrary.flatMap(
+          Arbitrary.schema(Schema.Literal("source")),
+          () => Arbitrary.schema(schema)
+        )
+        const fiber = yield* Effect.forkChild(Arbitrary.sampleEffect(arbitrary, {
+          count: 1,
+          seed: "interrupt-flat-map-dependent"
+        }))
+
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+        assert.isTrue(Exit.hasInterrupts(exit))
+      }))
+
+    it.effect("interrupts long discarded-source promotion", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const source = Arbitrary.schema(
+          Schema.Array(Schema.Int).check(Schema.isMinLength(1_000), Schema.isMaxLength(1_000))
+        )
+        let callbacks = 0
+        const arbitrary = Arbitrary.flatMap(source, (value) => {
+          callbacks++
+          if (callbacks === 2) Deferred.doneUnsafe(started, Effect.void)
+          const target = Arbitrary.map(Arbitrary.schema(Schema.Null), () => value)
+          return callbacks === 1 ? target : Arbitrary.filter(target, () => false)
+        })
+        const fiber = yield* Effect.forkChild(
+          Arbitrary.checkEffect(arbitrary, () => false, {
+            runs: 1,
+            seed: "interrupt-flat-map-promotion"
+          }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 16))
+        )
+
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+        assert.isTrue(Exit.hasInterrupts(exit))
+      }))
+
     it.effect("keeps synchronous combinator exceptions as defects", () =>
       Effect.gen(function*() {
         const source = Arbitrary.schema(Schema.Literal("value"))
@@ -2291,7 +2581,8 @@ describe("Arbitrary", () => {
         const arbitraries: ReadonlyArray<Arbitrary.Arbitrary<unknown>> = [
           Arbitrary.map(source, defect),
           Arbitrary.filter(source, defect),
-          Arbitrary.filterMap(source, defect)
+          Arbitrary.filterMap(source, defect),
+          Arbitrary.flatMap(source, defect)
         ]
 
         for (const arbitrary of arbitraries) {

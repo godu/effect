@@ -18,8 +18,8 @@ The public interface is growing in this order:
 schema
   -> map, filter, filterMap [implemented]
   -> Union [implemented]
-  -> Schema-local `arbitrary` annotation
-  -> flatMap
+  -> Schema-local `arbitrary` annotation [implemented]
+  -> flatMap [implemented]
 ```
 
 `map`, `filter`, `filterMap`, `Union`, and `flatMap` compose existing Arbitraries. They do not introduce a public
@@ -45,7 +45,7 @@ The following architectural decisions are settled:
 | P2       | `map`, `filter`, and `filterMap`        | Complete                           | General transformation and bounded residual rejection      |
 | P3       | `Union` and seeded external generators  | `Union` complete; adapter userland | Static choice and a userland Faker integration             |
 | P4       | Schema-local `arbitrary` annotation     | Complete                           | Nested distribution customization without paths/registries |
-| P5       | Single-pass `flatMap`                   | Pending                            | Dependent generation with deterministic shrinking/replay   |
+| P5       | Single-pass `flatMap`                   | Complete                           | Dependent generation with deterministic shrinking/replay   |
 | P6       | Quality and optimization research       | Pending                            | Diagnostics, generation quality, and later optimizations   |
 
 Each phase should be implemented as one coherent slice after its architectural decisions are approved. Do not land a
@@ -57,7 +57,7 @@ Use the current branch as a baseline, then make the existing bundle regression t
 
 1. run the complete Arbitrary runtime-performance family on the current `HEAD` and record the commit and result
    artifact;
-2. retain all 21 warm native/fast-check comparisons and the existing cold scenario;
+2. retain all 22 warm native/fast-check comparisons and the existing cold scenario;
 3. run the complete bundle comparison and record exact results for `config.ts` and `schema-toArbitrary.ts`;
 4. retain the measured `config.ts` result as an accepted cost of keeping `toCodecArbitrary` local and uniform;
 5. use the current commit as the bundle baseline for subsequent slices;
@@ -67,9 +67,9 @@ The comparison at `6fd1d0d1` measured `config.ts` at 21.26 KB versus 21.10 KB on
 accepted: it preserves one uniform annotation protocol, and the marginal cost is small relative to a real application
 bundle. Do not introduce a URL-specific palette result or move every built-in Link into the palette to recover it.
 
-The performance table in the current changeset is a historical reference, not the baseline for these follow-ups. The
-latest recorded measurements outperform the equivalent fast-check fixture in all 21 reported warm scenarios, so
-further optimization work must be driven by a new measurement rather than by the old profiling tasks.
+The performance table at the P0 baseline was a historical reference, not the baseline for later slices. At that
+baseline, the recorded measurements outperformed the corresponding fast-check fixture in all 22 reported warm
+scenarios, so further optimization work had to be driven by a new measurement rather than by the old profiling tasks.
 
 Exit gate:
 
@@ -358,8 +358,8 @@ The compiler integration is verified against:
 - exclusion from persisted Schema annotations.
 
 The compiler wrapper must preserve the replacement's finalized `minCost`. A replacement derived from a recursive
-Schema already owns its finalized compilation graph. The prototype must verify that it can remain opaque to the
-containing Schema compiler; if it cannot, stop rather than adding graph metadata to the public `Arbitrary` interface.
+Schema already owns its finalized compilation graph. The production implementation keeps it opaque to the containing
+Schema compiler and does not add graph metadata to the public `Arbitrary` interface.
 
 Exit gate:
 
@@ -379,7 +379,7 @@ replacements, shrink promotion, replay, exhaustion, precedence, clearing, and pe
 factory result type.
 
 In the complete five-round Node 24 matrix, 128 nested `Person` samples using a Schema-local replacement measured
-25.70 microseconds versus 80.96 microseconds for the equivalent hand-written fast-check v4 arbitrary. All 22 warm
+25.70 microseconds versus 80.96 microseconds for the corresponding hand-written fast-check v4 arbitrary. All 22 warm
 native scenarios remained faster than their fast-check fixtures. Against the pre-slice commit, `config.ts` was
 unchanged, while `schema-toArbitrary.ts`, `arbitrary-combinators.ts`, and the opting-in `arbitrary-schema-local.ts`
 fixtures grew by 0.14, 0.13, and 0.14 KB gzip respectively.
@@ -407,8 +407,8 @@ slice does not add a public recursion constructor for Arbitrary; recursive Schem
 Arbitraries remain in scope.
 
 Calling `Arbitrary.schema` inside the callback recompiles that Schema whenever the callback is evaluated. For finite
-dependent domains, callers can precompile the possible Arbitraries. The prototype must measure dynamic compilation and
-decide whether to document it as normal usage or discourage it; it must not add implicit memoization or a registry.
+dependent domains, callers should precompile the possible Arbitraries. The implementation does not add implicit
+memoization or a registry.
 
 ### Shrinking
 
@@ -438,7 +438,7 @@ If the dependent generator for a source shrink returns `Discarded`, omit that no
 descendants. Do not retry internally. An initial source or dependent discard rejects the complete attempt and counts
 against `maxDiscards`; shrink-time discards are hidden traversal and do not count as attempts.
 
-### PRNG and budget isolation to prototype
+### PRNG and budget isolation
 
 The recommended implementation adds checkpoint and clone operations to the private xoshiro implementation without
 changing its draw algorithm:
@@ -450,9 +450,9 @@ changing its draw algorithm:
 - lazy shrink branches never mutate their siblings or the enclosing generation state.
 
 Checkpointing after the source means that a smaller source value changes the dependent constraint while retaining the
-same subsequent random choices. Fast-check instead checkpoints before the source. The P5 prototype must compare these
-two policies on deterministic output, shrinking quality, runtime, and bundle cost, then present the choice for approval.
-Add an attribution comment if the implementation follows fast-check's code or strategy.
+same subsequent random choices. Fast-check instead checkpoints before the source. The P5 prototype compared both
+policies on deterministic output, shrinking quality, runtime, and bundle cost; the post-source policy was approved.
+The production attribution credits only the source-first, close-after-dependent topology shared with fast-check.
 
 The recommended budget policy is:
 
@@ -465,9 +465,9 @@ committed budget = min(r, dependent remaining budget)
 
 The corresponding static `flatMap` minimum is the source minimum. The clamp prevents an unused dependent minimum-cost
 top-up from becoming additional optional size. Every source-shrink branch starts from the same residual allowance plus
-its own dependent minimum and never commits its state. This policy is not settled: the prototype must compare it with
-giving the dependent generator an independent size allowance, then present the productivity, output-size, and nested
-`flatMap` tradeoffs for approval.
+its own dependent minimum and never commits its state. The prototype compared this with giving each dependent an
+independent size allowance; shared residual fuel was approved because it preserves productivity without amplifying
+optional recursion across nested `flatMap` calls.
 
 ### Verification
 
@@ -486,6 +486,15 @@ giving the dependent generator an independent size allowance, then present the p
 - sampling allocates neither checkpoints nor new shrink carriers;
 - warm sampling, dependent collection, failure, shrinking, and replay scenarios;
 - focused bundle fixture and no regression to unrelated fixtures.
+
+The production slice implements and tests this complete policy. The comparison prototype found that the post-source
+checkpoint reduced every failure in its 512-seed dependent-length workload to length one, versus 46% for the
+pre-source policy, and that shared residual fuel never exceeded the configured eight optional recursive steps. The
+three production warm fixtures measured 67.8 versus 120 microseconds for 128 samples, 5.93 versus 19.4 microseconds for
+failure plus shrinking, and 5.82 versus 12.8 microseconds for replay, against fast-check 4.9.0. The opting-in
+A same-checkout reachability ablation measured `arbitrary-combinators.ts` at 33.99 KB gzip with `flatMap` and 33.62 KB
+without the `flatMap` member, a 0.37 KB opt-in cost. The earlier cross-checkout comparison found
+`schema-toArbitrary.ts`, `arbitrary-schema-local.ts`, and `config.ts` unchanged.
 
 ## Verification policy for public phases
 
@@ -511,14 +520,16 @@ passes its semantic, runtime, and bundle gates.
 
 These are separate projects and must not block the prioritized path above:
 
-1. add structured discard reasons and runner health diagnostics after `filterMap` creates a concrete failure payload to
+1. decide how to bound hidden shrink-node promotion shared by `filter`, `filterMap`, and `flatMap`: either count it in
+   `maxShrinks` or introduce a separate internal work budget, while retaining descendant promotion and interruption;
+2. add structured discard reasons and runner health diagnostics after `filterMap` creates a concrete failure payload to
    preserve;
-2. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
-3. profile decoded collection and Declaration Links only if the new baseline identifies a regression;
-4. audit boundary-oriented distributions across the complete Schema catalog without attempting to imitate every
+3. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
+4. profile decoded collection and Declaration Links only if the new baseline identifies a regression;
+5. audit boundary-oriented distributions across the complete Schema catalog without attempting to imitate every
    fast-check frequency;
-5. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
-6. evaluate automatic persistence and reuse of concrete counterexamples last.
+6. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
+7. evaluate automatic persistence and reuse of concrete counterexamples last.
 
 Concrete counterexample persistence is distinct from replay-token persistence. After `map` or `flatMap`, an Arbitrary
 may no longer have a Schema or codec capable of serializing its output, while the existing opaque replay token remains

@@ -344,6 +344,34 @@ export const filterMap: {
 )
 
 /**
+ * Sequentially selects an `Arbitrary` from a generated value.
+ *
+ * **When to use**
+ *
+ * Use when the domain or shape of a generated value depends on another generated value.
+ *
+ * **Details**
+ *
+ * Shrinking first tries smaller source values and regenerates their dependent Arbitraries. It then shrinks the
+ * selected dependent value. After a dependent shrink is selected, source shrinking is closed for that branch.
+ *
+ * **Gotchas**
+ *
+ * The callback must be synchronous, deterministic, and terminating. It can be evaluated again during shrinking and
+ * replay. Deriving a Schema inside the callback also repeats that derivation, so precompile finite dependent
+ * Arbitraries when possible.
+ *
+ * @see {@link map} for total transformations that do not select another Arbitrary
+ * @see {@link Union} for static alternatives
+ * @category sequencing
+ * @since 4.0.0
+ */
+export const flatMap: {
+  <A, B>(f: (value: A) => Arbitrary<B>): (self: Arbitrary<A>) => Arbitrary<B>
+  <A, B>(self: Arbitrary<A>, f: (value: A) => Arbitrary<B>): Arbitrary<B>
+} = dual(2, <A, B>(self: Arbitrary<A>, f: (value: A) => Arbitrary<B>): Arbitrary<B> => Internal.flatMap(self, f))
+
+/**
  * Combines an array of existing Arbitraries into one `Arbitrary`.
  *
  * **When to use**
@@ -353,7 +381,7 @@ export const filterMap: {
  * **Details**
  *
  * Members compatible with the current generation budget are selected uniformly. Shrinking first tries the earliest
- * member with a strictly lower minimum cost, then continues within the selected member.
+ * globally minimum-cost member when it is strictly cheaper, then continues within the selected member.
  *
  * **Gotchas**
  *

@@ -9,10 +9,12 @@ provides interruptible sampling with typed exhaustion, and `Arbitrary.checkEffec
 The initial implementation supports bounded discards, shrinking, replay, and recursive and mutually recursive Schemas.
 `Arbitrary.isArbitrary` identifies values through the module's nominal protocol.
 
-Add `Arbitrary.map`, `Arbitrary.filter`, `Arbitrary.filterMap`, and `Arbitrary.Union` for composing derived Arbitraries
-without exposing a second catalog of primitive constructors. Filtering remains bounded and promotes valid shrink
-descendants through rejected nodes. `Union` uses the same budget, selection, and cross-branch shrinking policy as
-`Schema.Union`. Arbitrary values implement `Pipeable` for composition with data-last combinators.
+Add `Arbitrary.map`, `Arbitrary.flatMap`, `Arbitrary.filter`, `Arbitrary.filterMap`, and `Arbitrary.Union` for composing
+derived Arbitraries without exposing a second catalog of primitive constructors. Filtering remains bounded and
+promotes valid shrink descendants through rejected nodes. `flatMap` provides deterministic dependent generation,
+source-first shrinking, post-source PRNG checkpoints, and one shared residual recursion budget. `Union` uses the same
+budget, selection, and cross-branch shrinking policy as `Schema.Union`. Arbitrary values implement `Pipeable` for
+composition with data-last combinators.
 
 Add a public Schema-local `arbitrary` annotation for application-owned replacement distributions. Its factory is
 evaluated eagerly during derivation, all checks on the annotated node remain authoritative, and recursive replacement
@@ -33,7 +35,7 @@ Remove the fast-check bridge from the `effect` package, including `Schema.toArbi
 
 Migrate `TestSchema.Asserts.verifyLosslessTransformation` and `TestSchema.Asserts.arbitrary().verifyGeneration` to the
 native runner. Both methods now accept native check options directly, bound unsuccessful generation, and include the
-minimized counterexample and replay token in property failures.
+shrunk counterexample and replay token in property failures.
 
 Use the Arbitrary runner for all `@effect/vitest` property tests. Property inputs may combine Schemas and Arbitraries,
 and check options are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are
@@ -46,7 +48,7 @@ zeroes. `BigDecimal.make` now rejects scales that are not safe integers.
 Before its removal, the materialized fast-check bridge fixture
 `schema-toArbitrary-materialized-fast-check.ts` measured 79.00 KB minified and gzipped.
 
-Representative five-round runtime measurements against equivalent hand-written fast-check 4.9.0 arbitraries are
+Representative five-round runtime measurements against corresponding hand-written fast-check 4.9.0 arbitraries are
 shown below. Values are median latency on Node 24.12.0 and Apple M3; lower is better. Both implementations validate the
 same output domains, although their generation distributions are not identical.
 
@@ -70,6 +72,9 @@ same output domains, although their generation distributions are not identical.
 | 128 `filterMap` samples             | 31.5 µs |    73.3 µs |               0.43x |
 | 128 `Union` samples                 | 9.83 µs |    51.5 µs |               0.19x |
 | 128 Schema-local `Person` samples   | 25.7 µs |    81.0 µs |               0.32x |
+| 128 dependent `flatMap` samples     | 67.8 µs |     120 µs |               0.56x |
+| `flatMap` failure and shrinking     | 5.93 µs |    19.4 µs |               0.31x |
+| Replay `flatMap` shrink path        | 5.82 µs |    12.8 µs |               0.46x |
 | Passing property, 100 runs          | 27.3 µs |    43.0 µs |               0.64x |
 | `TestSchema`, 100 generations       | 35.0 µs |    49.6 µs |               0.70x |
 | First failure plus one shrink       | 1.28 µs |    9.28 µs |               0.14x |

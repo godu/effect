@@ -35,6 +35,15 @@ describe("Arbitrary", () => {
     expect(Arbitrary.map(strings, (value) => value.length)).type.toBe<Arbitrary.Arbitrary<number>>()
     expect(Arbitrary.map((value: string) => value.length)(strings)).type.toBe<Arbitrary.Arbitrary<number>>()
     expect(strings.pipe(Arbitrary.map((value) => value.length))).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(Arbitrary.flatMap(strings, (value) => Arbitrary.schema(Schema.Literal(value.length)))).type.toBe<
+      Arbitrary.Arbitrary<number>
+    >()
+    expect(
+      Arbitrary.flatMap((value: string) => Arbitrary.schema(Schema.Literal(value.length)))(strings)
+    ).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(
+      strings.pipe(Arbitrary.flatMap((value) => Arbitrary.schema(Schema.Literal(value.length))))
+    ).type.toBe<Arbitrary.Arbitrary<number>>()
     expect(Arbitrary.filter(stringOrNumber, (value): value is string => typeof value === "string")).type.toBe<
       Arbitrary.Arbitrary<string>
     >()

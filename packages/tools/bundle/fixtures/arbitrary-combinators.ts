@@ -6,6 +6,7 @@ const integers = Arbitrary.schema(Schema.Int)
 
 export const arbitrary = Arbitrary.Union([
   integers.pipe(Arbitrary.map((value) => value + 1)),
+  integers.pipe(Arbitrary.flatMap((left) => integers.pipe(Arbitrary.map((right) => [left, right] as const)))),
   integers.pipe(Arbitrary.filter((value) => value >= 0)),
   integers.pipe(Arbitrary.filterMap((value) => value === 0 ? Result.fail(value) : Result.succeed(value)))
 ])

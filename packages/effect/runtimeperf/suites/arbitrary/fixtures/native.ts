@@ -23,6 +23,21 @@ const seed = 42
 const recursiveSeed = 188
 const size = 10
 
+interface FlatMapValue {
+  readonly length: number
+  readonly values: ReadonlyArray<number>
+}
+
+const flatMapSource = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })))
+const flatMapItem = Schema.Int.check(Schema.isBetween({ minimum: -1_000, maximum: 1_000 }))
+const flatMapTargets = globalThis.Array.from({ length: 8 }, (_, index) => {
+  const length = index + 1
+  return Arbitrary.schema(
+    Schema.Array(flatMapItem).check(Schema.isMinLength(length), Schema.isMaxLength(length))
+  ).pipe(Arbitrary.map((values): FlatMapValue => ({ length, values })))
+})
+const makeFlatMapArbitrary = () => flatMapSource.pipe(Arbitrary.flatMap((length) => flatMapTargets[length - 1]))
+
 export const coldRecursiveFirstSample = () => ({
   run: () =>
     Effect.runSync(
@@ -238,6 +253,50 @@ export const schemaLocalArbitrarySample128 = () => {
     validate: (values: ReadonlyArray<{ readonly name: string; readonly age: number }>) => {
       assert.equal(values.length, 128)
       assert.equal(values.every((value) => value.name === "Ada" || value.name === "Grace"), true)
+    }
+  }
+}
+
+export const flatMapSample128 = () => {
+  const flatMapArbitrary = makeFlatMapArbitrary()
+  const program = Arbitrary.sampleEffect(flatMapArbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<FlatMapValue>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value.values.length === value.length), true)
+    }
+  }
+}
+
+export const flatMapCheckFalsifyAndShrink = () => {
+  const flatMapArbitrary = makeFlatMapArbitrary()
+  const program = Arbitrary.checkEffect(flatMapArbitrary, () => false, { runs: 1, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (result: Arbitrary.CheckResult<FlatMapValue, never>) => {
+      assert.equal(result._tag, "Falsified")
+      if (result._tag !== "Falsified") return
+      assert.equal(result.counterexample.length, 1)
+      assert.equal(result.counterexample.values.length, 1)
+    }
+  }
+}
+
+export const flatMapCheckReplay = () => {
+  const flatMapArbitrary = makeFlatMapArbitrary()
+  const property = () => false
+  const initial = Effect.runSync(Arbitrary.checkEffect(flatMapArbitrary, property, { runs: 1, seed, size }))
+  assert.equal(initial._tag, "Falsified")
+  if (initial._tag !== "Falsified") throw new Error("Expected the flatMap replay setup to falsify")
+  const program = Arbitrary.checkEffect(flatMapArbitrary, property, { replay: initial.replay })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (result: Arbitrary.CheckResult<FlatMapValue, never>) => {
+      assert.equal(result._tag, "Falsified")
+      if (result._tag !== "Falsified") return
+      assert.equal(result.counterexample.length, 1)
+      assert.equal(result.counterexample.values.length, 1)
     }
   }
 }

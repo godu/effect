@@ -235,6 +235,41 @@
               "size": 128
             },
             {
+              "name": "flat-map-sample-128-native",
+              "export": "flatMapSample128",
+              "scenario": "arbitrary-flat-map-sample-128",
+              "operation": "sample-flat-map",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "flat-map-check-falsify-shrink-native",
+              "export": "flatMapCheckFalsifyAndShrink",
+              "scenario": "arbitrary-flat-map-check-falsify-shrink",
+              "operation": "check-flat-map-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "flat-map-check-replay-native",
+              "export": "flatMapCheckReplay",
+              "scenario": "arbitrary-flat-map-check-replay",
+              "operation": "replay-flat-map",
+              "path": "failure",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 1
+            },
+            {
               "name": "check-pass-100-native",
               "export": "checkPass100",
               "scenario": "arbitrary-check-pass-100",
@@ -421,6 +456,29 @@
               "scenario": "arbitrary-schema-local-sample-128",
               "operation": "sample-schema-local",
               "size": 128
+            },
+            {
+              "name": "flat-map-sample-128-fast-check-v4",
+              "export": "flatMapSample128",
+              "scenario": "arbitrary-flat-map-sample-128",
+              "operation": "sample-flat-map",
+              "size": 128
+            },
+            {
+              "name": "flat-map-check-falsify-shrink-fast-check-v4",
+              "export": "flatMapCheckFalsifyAndShrink",
+              "scenario": "arbitrary-flat-map-check-falsify-shrink",
+              "operation": "check-flat-map-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "flat-map-check-replay-fast-check-v4",
+              "export": "flatMapCheckReplay",
+              "scenario": "arbitrary-flat-map-check-replay",
+              "operation": "replay-flat-map",
+              "path": "failure",
+              "size": 1
             },
             {
               "name": "check-pass-100-fast-check-v4",

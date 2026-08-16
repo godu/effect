@@ -38,7 +38,7 @@ The same seed, Schema, and options produce the same sequence of samples within t
 
 `Arbitrary` is intentionally opaque. Schema remains the public language for primitive and structural generation;
 there is no second catalog of constructors such as `String` or `Array`. Existing Arbitraries can be composed with
-`map`, `filter`, `filterMap`, and `Union`.
+`map`, `flatMap`, `filter`, `filterMap`, and `Union`.
 
 ## Composing Arbitraries
 
@@ -79,8 +79,38 @@ const identifier = Arbitrary.Union([
 ```
 
 `Union` follows the generation policy of `Schema.Union`: it selects uniformly among members compatible with the
-current recursion budget. During shrinking, a branch with a higher minimum cost first tries the earliest cheaper
-member, then continues through its own shrink tree. The array must contain at least one member.
+current recursion budget. During shrinking, a branch with a higher minimum cost first tries the earliest globally
+minimum-cost member when it is strictly cheaper, then continues through its own shrink tree. The array must contain at
+least one member.
+
+Use `flatMap` when the domain or shape of one value depends on another generated value. Precompile finite dependent
+Arbitraries when possible, because deriving a Schema inside the callback repeats that derivation whenever the callback
+is evaluated:
+
+```ts
+import { Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const Length = Arbitrary.schema(
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))
+)
+
+const StringsByLength = globalThis.Array.from({ length: 4 }, (_, index) => {
+  const length = index + 1
+  return Arbitrary.schema(
+    Schema.String.check(Schema.isMinLength(length), Schema.isMaxLength(length))
+  )
+})
+
+const SizedString = Length.pipe(
+  Arbitrary.flatMap((length) => StringsByLength[length - 1])
+)
+```
+
+`flatMap` shrinks source values first and regenerates their selected dependent Arbitrary. It then shrinks the current
+dependent value. Once a dependent shrink is selected, source shrinking stays closed on that branch. Root rejection by
+either Arbitrary counts as a discard; a dependent rejected while shrinking is skipped and valid descendants of the
+source remain reachable.
 
 ### Integrating Faker
 
@@ -178,12 +208,12 @@ const program = Arbitrary.checkEffect(
 
 A property failure is data rather than a thrown assertion. Inspect the `_tag` of the returned `CheckResult`:
 
-| Result           | Meaning                                                                                        |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| `Passed`         | Every requested run passed.                                                                    |
-| `Falsified`      | A property returned `false` or its Effect failed. Includes the minimized counterexample found. |
-| `Exhausted`      | Generation exceeded `maxDiscards` before completing the requested runs.                        |
-| `ReplayMismatch` | A replay token no longer identifies the same failure or shrink path.                           |
+| Result           | Meaning                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `Passed`         | Every requested run passed.                                                                 |
+| `Falsified`      | A property returned `false` or its Effect failed. Includes the shrunk counterexample found. |
+| `Exhausted`      | Generation exceeded `maxDiscards` before completing the requested runs.                     |
+| `ReplayMismatch` | The recorded attempt or accepted shrink path no longer reproduces a failure.                |
 
 When an Effectful property fails, `Falsified.failure` is a `PropertyError` containing the typed error. Returning
 `false` produces `ReturnedFalse`.
@@ -230,7 +260,8 @@ guaranteed across releases of this unstable module. For a permanent regression t
 counterexample as an ordinary example-based test.
 
 A `ReplayMismatch` is returned when the Schema, property, or implementation has changed enough that the recorded
-attempt or shrink path no longer reproduces the same failure.
+attempt or accepted shrink path no longer reproduces a failure. The token does not fingerprint the counterexample or
+failure value, so a different failure at the same recorded coordinates is still a successful replay.
 
 ## Sampling Options
 
@@ -291,7 +322,7 @@ Discarding is always bounded by `maxDiscards`. An impossible or extremely select
 
 ### Recursive Schemas
 
-Recursive and mutually recursive Schemas are supported when every recursive component has a finite generation path:
+Recursive and mutually recursive Schemas are supported when the derived root has a finite generation path:
 
 ```ts
 import { Schema } from "effect"
@@ -311,11 +342,12 @@ const nodes = Arbitrary.schema(Node)
 ```
 
 The empty `children` array is a finite path, so the Schema is productive. The compiler analyzes mutually recursive
-components together and shares a per-sample budget across each component. This prevents recursive siblings from each
+components together and shares one budget across the complete sample. This prevents recursive siblings from each
 spending the full budget independently.
 
-If a recursive component has no finite route, derivation throws immediately. The caller does not need to provide a
-terminal arbitrary, a depth identifier, or another recursion-specific annotation.
+An unproductive recursive branch is excluded as an empty alternative. If the root has no finite route, derivation
+throws immediately. The caller does not need to provide a terminal arbitrary, a depth identifier, or another
+recursion-specific annotation.
 
 ### Declaration Schemas
 
@@ -406,16 +438,215 @@ Raw fast-check arbitraries and the `fastCheck` options object are not supported.
 needs composition beyond a Schema.
 
 `@effect/vitest` turns `Falsified`, `Exhausted`, and `ReplayMismatch` results into test failures. Falsified output
-includes the minimized counterexample and replay token.
+includes the shrunk counterexample and replay token.
+
+## Advantages of the Native Implementation
+
+The native implementation is not a compatibility layer around fast-check. It gives Effect ownership of the public
+model, generation semantics, and runner while keeping fast-check usable as an independent library when its broader
+catalog is needed.
+
+- **No fast-check version coupling.** The `effect` package no longer depends on fast-check or exposes its `Arbitrary`,
+  constraints, depth identifiers, paths, or runner options. An application can use any fast-check major separately.
+- **One language for data domains.** Schema describes structure, checks, canonical codecs, declarations, and recursion.
+  The Arbitrary module does not mirror that catalog with a builder interface, HKT encoding, or second public AST.
+- **Schema-aware recursion.** Recursive and mutually recursive components are analyzed automatically. Derivation fails
+  immediately when the root has no finite path, and recursive branches share one per-sample fuel budget. Callers do not
+  wire a terminal generator or depth identifier manually.
+- **Bounded rejection.** Root rejection is represented as a discard and is limited by `maxDiscards`. An impossible
+  filter returns `SampleError` or `Exhausted` instead of remaining inside an unbounded generator retry loop.
+- **Effect-native execution.** Sampling and checking are interruptible Effects. Properties may be pure or Effectful,
+  typed failures remain data, defects remain defects, and services compose normally. The same runner powers direct
+  checks, `TestSchema`, and `@effect/vitest`.
+- **Schema-local distributions.** An exact Schema occurrence can replace its distribution through the `arbitrary`
+  annotation while keeping checks on that node authoritative. This supports libraries such as Faker without a global
+  registry, field paths, or a public generator builder.
+- **Replay as one value.** A falsification carries one opaque token for the original attempt and complete accepted
+  shrink path. Native replay regenerates and re-evaluates the original failing attempt before traversing that full path,
+  and reports a mismatch when the recorded coordinates no longer reproduce a failure. The paired fast-check runner
+  can start directly from its recorded path.
+- **Dependent shrinking designed for the native engine.** `flatMap` checkpoints randomness after its source. Shrinking
+  the source therefore changes the dependent constraint while retaining the same subsequent random choices. A shared
+  residual recursion budget prevents nested `flatMap` calls from each receiving a fresh optional allowance.
+- **Smaller and faster in the repository fixtures.** The removed materialized fast-check bridge measured 79.00 KB
+  minified and gzipped. The current native `schema-toArbitrary.ts` fixture is substantially smaller. In the current
+  warm Node 24 benchmarks against corresponding hand-written fast-check 4.9.0 Arbitraries, the native scenarios are
+  faster;
+  these are measurements of the documented fixtures, not a claim that every distribution or workload is universally
+  faster.
+
+Some of these gains come from tighter integration and some from narrower scope. The native engine can compile common
+Schema shapes into direct loops, keep a synchronous no-shrink sampling lane, and omit defensive machinery required by
+a general-purpose standalone library. It also deliberately does not reproduce every fast-check constructor,
+distribution, reporter, example facility, or runner option.
 
 ## Current Scope
 
 The unstable module intentionally keeps its constructor surface small. It does not currently expose:
 
-- a public arbitrary constructor catalog or dependent `flatMap`;
+- a public arbitrary constructor catalog;
 - assertion formatting outside the `@effect/vitest` integration;
 - parallel property evaluation;
 - a replay compatibility guarantee across releases.
 
 These boundaries keep generation semantics owned by Schema while leaving the internal generator and shrink
 representation replaceable.
+
+## Appendix: Technical Decisions
+
+This appendix records the implementation choices that define the first native engine. They are documented because the
+module is unstable and because changing one can alter generated sequences, shrinking, replay, performance, or bundle
+size even when the public types remain unchanged.
+
+### Public Boundary
+
+- `Arbitrary<A>` is opaque, covariant, nominally identified, and `Pipeable`. Its `gen` field is internal.
+- Schema is the only public catalog for primitive and structural generation. The module exposes composition and
+  running operations, not a public `Sample`, shrink tree, PRNG, recursion budget, compiler context, or builder.
+- `sampleEffect` and `checkEffect` are named for their Effect return type, leaving room for future synchronous runners
+  without overloading their semantics.
+- Mapper, predicate, and `flatMap` callbacks must be synchronous, deterministic, terminating, and non-mutating. Their
+  thrown exceptions are defects of the Effect runner. An `arbitrary` annotation factory has the same purity contract,
+  but it is evaluated eagerly, so an exception escapes `Arbitrary.schema` synchronously. Properties may return an
+  Effect, but must remain deterministic and non-mutating for the same input and initial environment. A synchronous
+  callback that never returns cannot be preempted.
+
+### Generation Kernel
+
+- The private `Generator<A>` contains only `minCost` and `generate`. Schema-only `Compiled<A>` nodes extend it with
+  mutable dependency and fixed-point metadata; ordinary Arbitrary combinators do not participate in the Schema graph.
+- One generation call returns either `Generated` or `Discarded`, synchronously when possible and as an Effect only when
+  necessary. Internal combinators use the eager Effect operators so immediate results stay on the synchronous path.
+- A generated value optionally owns a lazy, one-shot `Pull` of smaller samples. The tree is not materialized eagerly,
+  and sampling with shrinking disabled does not construct shrink carriers.
+
+### Schema Compilation
+
+- Compilation begins with `SchemaAST.toType`, so generation targets the decoded Schema `Type`, never its encoded side.
+- The compiler works directly from Schema AST rather than translating it into a second Arbitrary AST. This retains
+  check ordering, declaration Links, decoded type parameters, Suspend identity, and paths in one representation.
+- Compilation is eager and cached by AST plus inherited constraint within one derivation. Placeholders are finalized
+  after the graph is discovered. Unsupported declarations, directly contradictory normalized bounds, and recursive
+  roots without a finite path fail during `Arbitrary.schema`; other incompatible check combinations exhaust at
+  runtime.
+- Recognized checks are normalized and pushed into primitive or structural generators. The original checks remain
+  authoritative residual predicates. Ordinary nodes do not run a general Schema parser for every sample; declaration
+  Links are decoded and then validated against their original declaration.
+- Supported regular-expression patterns become constructive candidates, while every pattern remains a residual
+  predicate. One supported candidate is selected uniformly for each attempt; failure to generate within the active
+  length constraints discards that attempt. Unsupported patterns remain filters rather than making the whole Schema
+  unsupported.
+
+### Declarations and Local Overrides
+
+- Declaration representations resolve in the order `toCodecArbitrary`, `toCodecJson`, then `toCodec`.
+  `toCodecJson() === undefined` means that the declaration is JSON-canonical but still opaque, so resolution stops and
+  derivation fails instead of silently choosing another codec.
+- `toCodecArbitrary` returns a Schema `Link`. Its source is generated constructively, its decode may reject, and the
+  original declaration remains authoritative. Invalid roots are bounded discards; invalid shrink nodes are omitted and
+  valid descendants are promoted.
+- The callback receives decoded type parameters, normalized constraints, and a closed Schema palette for Effect-owned
+  declarations. `Array(Item, options)` expresses length and selector-based uniqueness for array-backed collections
+  without exposing the generator kernel or a registry.
+- The compiler may use `Order` while merging bounds, but removes it before passing the flattened constraint to a
+  `toCodecArbitrary` callback. Link authors own the semantic compatibility of their representation; the original
+  declaration checks turn incompatible outputs into bounded discards.
+- Decode-only generation Links use `SchemaGetter.forbiddenEncoding`; generation never invokes their encode side.
+- The Schema-local `arbitrary` annotation is a zero-argument factory evaluated eagerly during derivation. The outermost
+  annotation in a check chain wins, explicit `undefined` clears an inner annotation, and an override on a parent
+  replaces that complete subtree. The replacement is trusted for structural type correctness, while checks attached to
+  the annotated node are applied exactly once. Recursive self-derivation through the same annotation fails eagerly.
+- The unstable Arbitrary module installs the executable annotation type through module augmentation and excludes it
+  from Schema persistence. `Schema` therefore does not import Arbitrary or make the unstable generator reachable from
+  unrelated Schema bundles.
+- An annotation is local to the immutable Schema occurrence that carries it. Capturing Faker or another dependency in
+  that Schema intentionally makes the dependency reachable from bundles importing the annotated Schema.
+
+### Recursion and Size
+
+- Suspend dependencies are analyzed as a graph. A fixed point computes the minimum recursive cost and identifies
+  productive branches; an unproductive branch behaves as empty, while an unproductive root is rejected eagerly.
+- Each generation attempt starts with `minCost + size` units of recursive fuel. Recursive Suspend crossings consume
+  fuel, and child minima are reserved before siblings generate. Recursive siblings are shuffled for fair access to the
+  shared fuel, then written back in declaration order.
+- The budget is shared across recursive and mutually recursive branches in the complete sample. A sibling or nested
+  composition does not receive its own fresh optional recursion allowance.
+- `size` is also visible to each collection or string generator as a complexity/cardinality target. It is fixed for
+  direct sampling and grows with successful property runs. Explicit Schema minima remain mandatory and maxima clamp
+  generation; discarded attempts do not advance size.
+
+### Randomness and Distributions
+
+- The runner resolves one master seed, hashes its type and value, and derives an independent xoshiro128** state from
+  `(seed, attempt)`. Replay can therefore jump directly to an attempt without executing earlier attempts, and property
+  use of Effect `Random` cannot perturb generation.
+- Integer and BigInt ranges use exact rejection sampling. Numeric generation includes a run-dependent boundary bias;
+  IEEE-754 numbers use a monotone bit index so signed zero, subnormal values, infinities, and NaN can participate in
+  generation and shrinking when allowed.
+- Unbounded Int and BigInt magnitude grows with size. Ordinary strings use printable ASCII plus an explicit JavaScript
+  edge corpus; regex generation supports a defined subset and counts UTF-16 code units.
+- Exact probabilities, seeds-to-values, and shrink orders are implementation details. Several low-level techniques are
+  adapted from fast-check and pure-rand and are attributed next to their implementations; the native value proposition
+  does not depend on presenting those techniques as Effect inventions.
+
+### Structural Generation and Shrinking
+
+- Arrays remove optional or repeated structure before shrinking elements. Objects remove optional/index entries,
+  shrink values, then shrink generated keys while preserving key uniqueness.
+- Uniqueness is constructive and has bounded retries. A selector can project a Map entry to its key. Primitive values
+  use JavaScript Set semantics, while objects use Effect `Hash` and `Equal`.
+- `Union` selects uniformly among members affordable under the current recursive budget. During shrinking it first
+  offers the earliest globally minimum-cost member when it is strictly cheaper than the selected member, then the
+  selected member's own shrink tree. Weighted choice is not part of the current interface.
+- `map` transforms the complete tree without consuming randomness or changing its positions, including duplicate
+  mapped values. `filter` and `filterMap` turn a rejected root into `Discarded`; while shrinking they omit rejected nodes
+  and promote valid descendants. Hidden promotion work is lazy and interruptible but does not count as a property
+  evaluation.
+- `filterMap` discards the failure value carried by `Result`. `map` and `filter` retain specialized implementations so
+  their common paths do not allocate or inspect a `Result` merely to reuse `filterMap` as a semantic primitive.
+
+### Dependent Generation with `flatMap`
+
+- Generation runs the source, evaluates the callback, then runs the selected dependent Arbitrary. The composed
+  generator's static minimum cost is the source minimum because the dynamic dependent minimum is funded locally.
+- Shrinking is source-first. A selected source shrink retains its further source shrinks. The current dependent tree is
+  tried afterward, and selecting one of its nodes permanently closes source shrinking for that branch. The one-shot
+  `Pull` remains sufficient; a replayable tree or ZIO-style source reopening is unnecessary under deterministic
+  callbacks.
+- An initial source or dependent discard rejects the complete attempt. When a dependent for a source shrink discards,
+  that node is hidden and the source node's descendants are promoted without an internal retry.
+- Sampling, where shrinking is disabled, uses the enclosing state directly and creates no checkpoint. For checking,
+  the source receives an isolated PRNG and budget state. The engine checkpoints after source generation, and the
+  initial dependent plus every source-shrink dependent receives an independent clone of that checkpoint. Only the
+  initial branch commits its final state; lazy shrink branches cannot perturb siblings or later generation.
+- If `r` is the residual source fuel and `m` is the selected dependent minimum, the dependent starts with `r + m` and
+  commits `min(r, dependentRemaining)`. The top-up guarantees productivity at size zero, while the clamp prevents its
+  unused portion from becoming fresh optional recursion fuel. Nested `flatMap` calls therefore share one allowance.
+- Calling `Arbitrary.schema` inside the callback recompiles that Schema for every callback evaluation. The engine does
+  not introduce implicit memoization or a registry.
+
+### Runner, Replay, and Interruption
+
+- `sampleEffect` fails with typed `SampleError`. `checkEffect` returns `Passed`, `Falsified`, `Exhausted`, or
+  `ReplayMismatch`. Only exact `true` passes; `false` and typed Effect failure are shrinkable property failures. Defects
+  and interruption stay in the Effect channel.
+- Shrinking follows the first failing child. `maxShrinks` limits candidate property evaluations, while `shrinks` counts
+  accepted failing descents. Runs exclude shrink evaluations. Generated values are neither cloned nor frozen.
+- A replay token is opaque and records the seed, attempt, effective size, and complete accepted sibling path. Replay
+  reconstructs contexts instead of serializing the shrink tree and returns `ReplayMismatch` when the attempt or path
+  no longer reproduces a failure. It does not compare counterexample or failure fingerprints. Malformed tokens may
+  defect, and compatibility is not promised across unstable releases.
+- Long synchronous attempt loops yield according to `Scheduler.MaxOpsBeforeYield`. Effectful generation, declaration
+  decoding, property evaluation, and lazy shrink traversal remain interruptible. Parallel property evaluation is not
+  part of the current runner.
+
+### Deliberate Differences and Boundaries
+
+- The same seed is not expected to match fast-check, and distributions or local counterexamples need not be identical.
+  For compiler-derived and Link-derived generation, the guarantees are domain validity, bounded generation,
+  deterministic replay within an implementation, productive recursion, and the documented shrink policies. A
+  Schema-local `arbitrary` override is explicitly trusted for structural type correctness.
+- The module does not expose the private `Sample` carrier, custom shrink trees, parallel checking, complete fast-check
+  `Parameters`, formatted assertion reporting outside `@effect/vitest`, or cross-release replay stability.
+- Fast-check remains appropriate when an application needs its larger standalone constructor catalog or exact runner
+  behavior. The native engine is optimized for Effect Schema and Effect execution rather than universal replacement.
