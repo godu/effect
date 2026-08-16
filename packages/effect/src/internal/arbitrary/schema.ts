@@ -2,6 +2,7 @@ import type * as BigDecimal from "../../BigDecimal.ts"
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
+import { identity } from "../../Function.ts"
 import * as Hash from "../../Hash.ts"
 import * as Option from "../../Option.ts"
 import * as Order from "../../Order.ts"
@@ -124,6 +125,7 @@ function mergeConstraint(self: Constraint | undefined, that: Constraint): Constr
     : self?.number === "finite" || that.number === "finite"
     ? "finite"
     : undefined
+  const uniqueBy = that.uniqueBy ?? self?.uniqueBy
   return {
     ...(order === undefined ? undefined : { order }),
     ...(minimum === undefined ? undefined : { minimum }),
@@ -138,7 +140,7 @@ function mergeConstraint(self: Constraint | undefined, that: Constraint): Constr
     ...(maxProperties === undefined ? undefined : { maxProperties }),
     ...(patterns === undefined ? undefined : { patterns }),
     ...(number === undefined ? undefined : { number }),
-    ...(self?.unique === true || that.unique === true ? { unique: true } : undefined)
+    ...(uniqueBy === undefined ? undefined : { uniqueBy })
   }
 }
 
@@ -295,6 +297,24 @@ function timeZoneSchema(): Schema.Codec<number | string> {
 }
 
 const schemas: Schemas = {
+  Array: (item, options) => {
+    const { maxLength, minLength, uniqueBy } = options ?? {}
+    let schema = Schema.Array(item)
+    if (minLength !== undefined && maxLength !== undefined) {
+      schema = schema.check(Schema.isLengthBetween(minLength, maxLength))
+    } else if (minLength !== undefined) {
+      schema = schema.check(Schema.isMinLength(minLength))
+    } else if (maxLength !== undefined) {
+      schema = schema.check(Schema.isMaxLength(maxLength))
+    }
+    if (uniqueBy !== undefined) {
+      schema = schema.check(Schema.makeFilter(
+        (values) => values.every(makeUniqueAdderBy(uniqueBy)),
+        { toCodecArbitrary: { constraint: { uniqueBy } } }
+      ))
+    }
+    return schema
+  },
   Json: () => {
     let schema: Schema.Codec<Schema.Json>
     schema = Schema.Union([
@@ -372,20 +392,11 @@ const schemas: Schemas = {
       timeZone: timeZoneSchema()
     })
   },
-  Uint8Array: (constraint) => {
-    let schema: Schema.Codec<ReadonlyArray<number>> = Schema.Array(
-      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))
+  Uint8Array: (constraint) =>
+    schemas.Array(
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 })),
+      constraint
     )
-    if (constraint?.minLength !== undefined && constraint.maxLength !== undefined) {
-      schema = schema.check(Schema.isLengthBetween(constraint.minLength, constraint.maxLength))
-    } else if (constraint?.minLength !== undefined) {
-      schema = schema.check(Schema.isMinLength(constraint.minLength))
-    } else if (constraint?.maxLength !== undefined) {
-      schema = schema.check(Schema.isMaxLength(constraint.maxLength))
-    }
-    if (constraint?.unique === true) schema = schema.check(Schema.isUnique())
-    return schema
-  }
 }
 
 function lengthBounds(
@@ -717,8 +728,9 @@ const generateRepeatedRecursiveValues = (
   return loop()
 }
 
-// Primitive Set tracking follows fast-check v4.9.0's SameValueSet strategy (MIT). Hash buckets extend it with
-// Effect's equality semantics for objects.
+// Selector-based uniqueness and primitive Set tracking follow fast-check v4.9.0's uniqueArray and SameValueSet
+// strategies (MIT). Hash buckets extend them with Effect's equality semantics for objects.
+// https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/uniqueArray.ts
 // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/SameValueSet.ts
 const makeUniqueAdder = (): (value: any) => boolean => {
   let primitives: Set<any> | undefined
@@ -745,13 +757,21 @@ const makeUniqueAdder = (): (value: any) => boolean => {
   }
 }
 
+const makeUniqueAdderBy = (
+  uniqueBy: (value: any) => unknown
+): (value: any) => boolean => {
+  const add = makeUniqueAdder()
+  return uniqueBy === identity ? add : (input) => add(uniqueBy(input))
+}
+
 const generateRepeatedUniqueValues = (
   child: Model.Compiled<any>,
   count: number,
-  state: Model.GenerationState
+  state: Model.GenerationState,
+  uniqueBy: (value: any) => unknown
 ): Model.Generation<ReadonlyArray<any>> => {
   const out: Array<any> = []
-  const addUnique = makeUniqueAdder()
+  const addUnique = makeUniqueAdderBy(uniqueBy)
   let remaining = count
   let reserved = count * child.minCost
   let retries = 0
@@ -1458,6 +1478,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     path: ReadonlyArray<PropertyKey>,
     constraint: Constraint | undefined
   ): Model.Compiled<ReadonlyArray<any>> => {
+    const uniqueBy = constraint?.uniqueBy
     const elements = ast.elements.map((element, index) => ({
       optional: SchemaAST.isOptional(element),
       compiled: recur(element, [...path, index])
@@ -1528,13 +1549,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         // Lower homogeneous arrays directly when no shrink context is needed.
         if (
           !state.shrinks && elements.length === 0 && tail.length === 0 && head !== undefined &&
-          (!head.mayRecurse || constraint?.unique !== true)
+          (!head.mayRecurse || uniqueBy === undefined)
         ) {
           const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
           return head.mayRecurse
             ? generateRepeatedRecursiveValues(head, repeatCount, itemState)
-            : constraint?.unique === true
-            ? generateRepeatedUniqueValues(head, repeatCount, itemState)
+            : uniqueBy !== undefined
+            ? generateRepeatedUniqueValues(head, repeatCount, itemState, uniqueBy)
             : generateRepeatedValues(head, repeatCount, itemState)
         }
         const selected = [
@@ -1552,7 +1573,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           }, state.shrinks)
         // Explicit collection minima must stay productive while progressive checks are still at size zero.
         const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
-        if (constraint?.unique !== true) {
+        if (uniqueBy === undefined) {
           return Model.mapComputation(
             generateSamples(selected, itemState),
             (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
@@ -1562,7 +1583,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         // strategy (MIT).
         // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/ArrayArbitrary.ts
         const generated: Array<Model.Sample<any>> = []
-        const addUnique = makeUniqueAdder()
+        const addUnique = makeUniqueAdderBy(uniqueBy)
         let reserved = sumCosts(selected.map((child) => child.minCost))
         const maximumRetries = selected.length
         let index = 0

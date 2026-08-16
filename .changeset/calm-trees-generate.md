@@ -11,7 +11,8 @@ implementation supports bounded discards, shrinking, replay, and recursive and m
 Add the experimental `Schema.Annotations.toCodecArbitrary` hooks. Declarations can provide a Schema Link optimized for
 generation, while filters can contribute native semantic constraints. The callback receives a closed palette of
 constraint-aware Schema factories for Effect-owned built-ins. JSON, RegExp, URL, Date, BigDecimal, date-time, time-zone,
-byte-array, and collection declarations use these Links for constructive generation without exposing an arbitrary
+byte-array, and collection declarations use these Links for constructive generation, including key-based Map
+uniqueness through the palette's Array schema, without exposing an arbitrary
 builder, registry, or second AST.
 
 Add `SchemaGetter.forbiddenEncoding`, a reusable getter for the encode side of decode-only Schema transformations.

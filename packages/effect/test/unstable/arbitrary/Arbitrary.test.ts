@@ -1336,15 +1336,18 @@ describe("Arbitrary", () => {
           (value: HashSet.HashSet<number>) => HashSet.size(value) === 3,
           { toCodecArbitrary: { constraint: { minSize: 3, maxSize: 3 } } }
         ))
-        const hashMap = Schema.HashMap(Schema.String, Schema.Int).check(Schema.makeFilter(
-          (value: HashMap.HashMap<string, number>) => HashMap.size(value) === 3,
+        const hashMap = Schema.HashMap(Schema.Literals(["a", "b", "c"]), Schema.Boolean).check(Schema.makeFilter(
+          (value: HashMap.HashMap<string, boolean>) => HashMap.size(value) === 3,
           { toCodecArbitrary: { constraint: { minSize: 3, maxSize: 3 } } }
         ))
         const schemas: ReadonlyArray<readonly [Schema.Top, (value: any) => number]> = [
           [Schema.Chunk(Schema.Int).check(Schema.isLengthBetween(3, 3)), Chunk.size],
           [Schema.ReadonlySet(Schema.Int).check(Schema.isSizeBetween(3, 3)), (value) => value.size],
           [hashSet, HashSet.size],
-          [Schema.ReadonlyMap(Schema.String, Schema.Int).check(Schema.isSizeBetween(3, 3)), (value) => value.size],
+          [
+            Schema.ReadonlyMap(Schema.Literals(["a", "b", "c"]), Schema.Boolean).check(Schema.isSizeBetween(3, 3)),
+            (value) => value.size
+          ],
           [hashMap, HashMap.size]
         ]
 
@@ -1356,6 +1359,25 @@ describe("Arbitrary", () => {
             size: 10
           })
           assert.isTrue(values.every((value) => size(value) === 3))
+        }
+      }))
+
+    it.effect("preserves Map key uniqueness while shrinking", () =>
+      Effect.gen(function*() {
+        const schema = Schema.ReadonlyMap(
+          Schema.Literals(["a", "b", "c"]),
+          Schema.Int
+        ).check(Schema.isSizeBetween(2, 3))
+        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+          runs: 1,
+          seed: "map-key-shrinking",
+          size: 10
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.counterexample.size, 2)
+          assert.strictEqual(new Set(result.counterexample.keys()).size, result.counterexample.size)
         }
       }))
 

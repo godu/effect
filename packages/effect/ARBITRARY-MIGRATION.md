@@ -251,7 +251,7 @@ The main constraint-shape changes are:
 | `noNaN` and `noInfinity`             | `number: "finite"` when both restrictions apply                     |
 | collection `minLength` / `maxLength` | `minLength`, `minSize`, or `minProperties` and its matching maximum |
 | string pattern                       | `{ source, flags }` in `patterns`                                   |
-| `unique: true`                       | `unique: true`                                                      |
+| `unique: true`                       | `uniqueBy: identity`                                                |
 | `candidate`                          | No direct equivalent                                                |
 
 Choose the cardinality field that matches the Schema domain: `minLength` and `maxLength` for strings and arrays,

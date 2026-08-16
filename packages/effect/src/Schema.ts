@@ -9427,8 +9427,8 @@ export const isPropertyNamesReviver: SchemaRepresentation.FilterReviver<null> = 
  * This check corresponds to the `uniqueItems: true` constraint in JSON Schema.
  *
  * Arbitrary:
- * During arbitrary generation, this applies a node-local `unique: true`
- * constraint using Effect equality.
+ * During arbitrary generation, this applies a node-local identity selector
+ * for constructive uniqueness using Effect equality.
  *
  * @category validation
  * @since 4.0.0
@@ -9446,7 +9446,7 @@ export function isUnique<T>(annotations?: Annotations.Filter) {
       toCode: () => ({ runtime: "Schema.isUnique()" }),
       toCodecArbitrary: {
         constraint: {
-          unique: true
+          uniqueBy: identity
         }
       },
       ...annotations
@@ -10874,38 +10874,6 @@ export type ReadonlyMapIso<Key extends Constraint, Value extends Constraint> = R
   readonly [Key["Iso"], Value["Iso"]]
 >
 
-function withArrayArbitraryConstraints<S extends Constraint>(
-  schema: $Array<S>,
-  constraint: Annotations.ToCodecArbitrary.GenerationConstraint | undefined
-): $Array<S> {
-  let out = schema
-  if (constraint?.minLength !== undefined && constraint.maxLength !== undefined) {
-    out = out.check(isLengthBetween(constraint.minLength, constraint.maxLength))
-  } else if (constraint?.minLength !== undefined) {
-    out = out.check(isMinLength(constraint.minLength))
-  } else if (constraint?.maxLength !== undefined) {
-    out = out.check(isMaxLength(constraint.maxLength))
-  }
-  if (constraint?.unique === true) out = out.check(isUnique())
-  return out
-}
-
-function collectionArbitraryConstraint(
-  constraint: Annotations.ToCodecArbitrary.GenerationConstraint | undefined,
-  unique = false
-): Annotations.ToCodecArbitrary.GenerationConstraint | undefined {
-  if (constraint === undefined && !unique) return undefined
-  return {
-    ...(constraint?.minSize === undefined && constraint?.minLength === undefined
-      ? undefined
-      : { minLength: constraint.minSize ?? constraint?.minLength }),
-    ...(constraint?.maxSize === undefined && constraint?.maxLength === undefined
-      ? undefined
-      : { maxLength: constraint.maxSize ?? constraint?.maxLength }),
-    ...(unique ? { unique: true } as const : undefined)
-  }
-}
-
 /**
  * Schema for readonly maps whose keys and values conform to the provided
  * schemas.
@@ -10956,12 +10924,13 @@ export function ReadonlyMap<Key extends Constraint, Value extends Constraint>(
             encode: (map) => [...map.entries()]
           })
         ),
-      toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
+      toCodecArbitrary: ({ constraint, schemas, typeParameters: [key, value] }) =>
         linkToCodecArbitrary<globalThis.Map<Key["Type"], Value["Type"]>>()(
-          withArrayArbitraryConstraints(
-            ArraySchema(Tuple([key, value])),
-            collectionArbitraryConstraint(constraint)
-          ),
+          schemas.Array(Tuple([key, value]), {
+            minLength: constraint?.minSize,
+            maxLength: constraint?.maxSize,
+            uniqueBy: (entry) => entry[0]
+          }),
           SchemaGetter.transform((entries) => new globalThis.Map(entries))
         ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
@@ -11365,12 +11334,13 @@ export function HashMap<Key extends Constraint, Value extends Constraint>(key: K
             encode: HashMap_.toEntries
           })
         ),
-      toCodecArbitrary: ({ constraint, typeParameters: [key, value] }) =>
+      toCodecArbitrary: ({ constraint, schemas, typeParameters: [key, value] }) =>
         linkToCodecArbitrary<HashMap_.HashMap<Key["Type"], Value["Type"]>>()(
-          withArrayArbitraryConstraints(
-            ArraySchema(Tuple([key, value])),
-            collectionArbitraryConstraint(constraint)
-          ),
+          schemas.Array(Tuple([key, value]), {
+            minLength: constraint?.minSize,
+            maxLength: constraint?.maxSize,
+            uniqueBy: (entry) => entry[0]
+          }),
           SchemaGetter.transform(HashMap_.fromIterable)
         ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
@@ -11481,12 +11451,13 @@ export function ReadonlySet<Value extends Constraint>(value: Value): $ReadonlySe
             encode: (set) => [...set.values()]
           })
         ),
-      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
         linkToCodecArbitrary<globalThis.Set<Value["Type"]>>()(
-          withArrayArbitraryConstraints(
-            ArraySchema(value),
-            collectionArbitraryConstraint(constraint, true)
-          ),
+          schemas.Array(value, {
+            minLength: constraint?.minSize,
+            maxLength: constraint?.maxSize,
+            uniqueBy: identity
+          }),
           SchemaGetter.transform((values) => new globalThis.Set(values))
         ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
@@ -11597,12 +11568,13 @@ export function HashSet<Value extends Constraint>(value: Value): HashSet<Value> 
             encode: Arr.fromIterable
           })
         ),
-      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
         linkToCodecArbitrary<HashSet_.HashSet<Value["Type"]>>()(
-          withArrayArbitraryConstraints(
-            ArraySchema(value),
-            collectionArbitraryConstraint(constraint, true)
-          ),
+          schemas.Array(value, {
+            minLength: constraint?.minSize,
+            maxLength: constraint?.maxSize,
+            uniqueBy: identity
+          }),
           SchemaGetter.transform(HashSet_.fromIterable)
         ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
@@ -11720,12 +11692,12 @@ export function Chunk<Value extends Constraint>(value: Value): Chunk<Value> {
             encode: Arr.fromIterable
           })
         ),
-      toCodecArbitrary: ({ constraint, typeParameters: [value] }) =>
+      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
         linkToCodecArbitrary<Chunk_.Chunk<Value["Type"]>>()(
-          withArrayArbitraryConstraints(
-            ArraySchema(value),
-            collectionArbitraryConstraint(constraint)
-          ),
+          schemas.Array(value, {
+            minLength: constraint?.minLength,
+            maxLength: constraint?.maxLength
+          }),
           SchemaGetter.transform(Chunk_.fromIterable)
         ),
       toEquivalence: ([value]) => Chunk_.makeEquivalence(value),
@@ -16379,7 +16351,23 @@ export declare namespace Annotations {
       readonly maxProperties?: number | undefined
       readonly patterns?: readonly [Pattern, ...Array<Pattern>]
       readonly number?: "finite" | "integer" | undefined
-      readonly unique?: true | undefined
+      readonly uniqueBy?: ((value: any) => unknown) | undefined
+    }
+
+    /**
+     * Configures an array representation used for native arbitrary generation.
+     *
+     * **Details**
+     *
+     * `uniqueBy` selects the value compared with Effect equality. The selector must be pure.
+     *
+     * @category models
+     * @since 4.0.0
+     */
+    export interface ArrayOptions<in A> {
+      readonly minLength?: number | undefined
+      readonly maxLength?: number | undefined
+      readonly uniqueBy?: ((value: A) => unknown) | undefined
     }
 
     /**
@@ -16387,13 +16375,18 @@ export declare namespace Annotations {
      *
      * **Details**
      *
-     * Each factory receives normalized constraints in the declaration's decoded domain and returns the Schema used as
-     * the source of its arbitrary-generation Link.
+     * Built-in factories receive normalized constraints in the declaration's decoded domain. `Array` instead receives
+     * an item Schema and array-specific generation options. Each factory returns the Schema used as the source of an
+     * arbitrary-generation Link.
      *
      * @category models
      * @since 4.0.0
      */
     export interface Schemas {
+      readonly Array: <S extends AnnotationSchemaConstraint>(
+        item: S,
+        options?: ArrayOptions<S["Type"]> | undefined
+      ) => $Array<S>
       readonly Json: (constraint: GenerationConstraint<Json> | undefined) => Codec<Json>
       readonly RegExp: (
         constraint: GenerationConstraint<globalThis.RegExp> | undefined

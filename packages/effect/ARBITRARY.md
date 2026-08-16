@@ -261,6 +261,9 @@ The callback also receives:
 - normalized recognized `constraint` values for the declaration;
 - a closed `schemas` palette for Effect-owned built-ins such as `Json`, `RegExp`, `URL`, `Date`, and `Uint8Array`.
 
+The palette also provides `Array(Item, options)` for declaration representations backed by arrays. Its options support
+constructive length bounds and uniqueness by a selected value, such as a Map entry key.
+
 The palette lets built-ins choose efficient generation representations without exposing a constructor registry or an
 arbitrary builder to application code.
 

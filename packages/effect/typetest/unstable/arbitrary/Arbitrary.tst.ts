@@ -39,6 +39,12 @@ describe("Arbitrary", () => {
             Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Box> | undefined
           >()
           expect(input.schemas).type.toBe<Schema.Annotations.ToCodecArbitrary.Schemas>()
+          expect(input.schemas.Array).type.toBe<
+            <S extends Schema.Constraint>(
+              item: S,
+              options?: Schema.Annotations.ToCodecArbitrary.ArrayOptions<S["Type"]>
+            ) => Schema.$Array<S>
+          >()
           expect(input.schemas.Date).type.toBe<
             (
               constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Date> | undefined
