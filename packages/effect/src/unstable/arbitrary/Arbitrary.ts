@@ -10,8 +10,35 @@ import type * as Model from "../../internal/arbitrary/model.ts"
 import * as Internal from "../../internal/arbitrary/runner.ts"
 import type { Pipeable } from "../../Pipeable.ts"
 import type { Predicate, Refinement } from "../../Predicate.ts"
-import type * as Schema from "../../Schema.ts"
+import type * as Schema_ from "../../Schema.ts"
 import type * as Types from "../../Types.ts"
+
+declare module "../../Schema.ts" {
+  namespace Annotations {
+    interface Bottom<T, TypeParameters extends ReadonlyArray<Schema_.Constraint>> {
+      /**
+       * Provides a replacement `Arbitrary` factory for the annotated Schema.
+       *
+       * **When to use**
+       *
+       * Use when a particular Schema occurrence needs a custom generation distribution.
+       *
+       * **Details**
+       *
+       * The factory is evaluated when `Arbitrary.schema` derives the containing Schema. Checks attached to the node are
+       * still applied to generated roots and shrink candidates.
+       *
+       * **Gotchas**
+       *
+       * The outermost `arbitrary` annotation in a check chain takes precedence. Setting it to `undefined` clears an
+       * inner annotation. The factory must not derive the same annotated Schema recursively.
+       *
+       * @since 4.0.0
+       */
+      readonly arbitrary?: (() => Arbitrary<T>) | undefined
+    }
+  }
+}
 
 /**
  * Runtime type identifier for native `Arbitrary` values.
@@ -236,7 +263,7 @@ export type CheckResult<A, E> = Passed | Falsified<A, E> | Exhausted | ReplayMis
  * @category constructors
  * @since 4.0.0
  */
-export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Type"]> {
+export function schema<S extends Schema_.Constraint>(schema: S): Arbitrary<S["Type"]> {
   return Internal.schema(schema)
 }
 

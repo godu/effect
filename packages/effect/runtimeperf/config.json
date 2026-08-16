@@ -223,6 +223,18 @@
               "size": 128
             },
             {
+              "name": "schema-local-arbitrary-sample-128-native",
+              "export": "schemaLocalArbitrarySample128",
+              "scenario": "arbitrary-schema-local-sample-128",
+              "operation": "sample-schema-local",
+              "astTags": [
+                "Objects",
+                "String",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
               "name": "check-pass-100-native",
               "export": "checkPass100",
               "scenario": "arbitrary-check-pass-100",
@@ -401,6 +413,13 @@
               "export": "unionSample128",
               "scenario": "arbitrary-union-sample-128",
               "operation": "sample-union",
+              "size": 128
+            },
+            {
+              "name": "schema-local-arbitrary-sample-128-fast-check-v4",
+              "export": "schemaLocalArbitrarySample128",
+              "scenario": "arbitrary-schema-local-sample-128",
+              "operation": "sample-schema-local",
               "size": 128
             },
             {

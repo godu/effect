@@ -203,6 +203,35 @@ The migration changes where generation logic lives:
 The original declaration remains authoritative. Values decoded by the Link are checked against it. Failed decodes and
 rejected values become bounded discards.
 
+### Schema-local Distribution Overrides
+
+Use the new `arbitrary` annotation when one particular Schema occurrence needs a complete replacement distribution:
+
+```ts
+import { Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const names = Arbitrary.schema(
+  Schema.Literals(["Ada Lovelace", "Grace Hopper"])
+)
+
+const Name = Schema.NonEmptyString.annotate({
+  arbitrary: () => names
+})
+
+const Person = Schema.Struct({
+  name: Name,
+  age: Schema.Int
+})
+```
+
+The factory is evaluated eagerly by `Arbitrary.schema(Person)`. It does not receive the default generator, normalized
+constraints, or type-parameter Schemas. All checks attached to `Name`, including checks added after the annotation,
+remain authoritative and are applied once as residual filters.
+
+This annotation differs from `toCodecArbitrary`: use `arbitrary` for an application-owned replacement distribution and
+`toCodecArbitrary` for a reusable constructive representation of an opaque declaration.
+
 ### Custom Filter Metadata
 
 The old `arbitrary` filter annotation has been replaced by `toCodecArbitrary`. Ordinary custom filters continue to
@@ -257,8 +286,9 @@ The main constraint-shape changes are:
 Choose the cardinality field that matches the Schema domain: `minLength` and `maxLength` for strings and arrays,
 `minSize` and `maxSize` for sized collections, and `minProperties` and `maxProperties` for object properties.
 
-There is no public arbitrary-candidate callback in the native system. For an opaque declaration that needs a
-statistically better source domain, express that source as a Schema Link with `toCodecArbitrary`.
+The Schema-local `arbitrary` factory is a complete replacement, not a constructive constraint hint. For an opaque
+declaration that needs a reusable statistically better source domain, express that source as a Schema Link with
+`toCodecArbitrary`.
 
 ## Migrating `@effect/vitest`
 
@@ -321,7 +351,8 @@ Migration is not only an import rename. Review the following differences:
    structured result.
 5. Rename `@effect/vitest` options from `fastCheck` to `arbitrary` and convert `numRuns` to `runs`.
 6. Replace raw or mixed `@effect/vitest` property inputs with Schemas.
-7. Remove old `toArbitrary` and `arbitrary` annotations. Add `toCodecArbitrary` only where canonical codecs do not
-   provide a suitable generation representation.
+7. Remove old `toArbitrary` and filter-level `arbitrary` annotations. Add `toCodecArbitrary` where canonical codecs do
+   not provide a suitable generation representation, or use the new Schema-local `arbitrary` factory for a complete
+   application-owned replacement distribution.
 8. Re-run properties with the native engine and record new replay tokens or explicit regression examples.
 9. Review discard limits for selective custom filters.

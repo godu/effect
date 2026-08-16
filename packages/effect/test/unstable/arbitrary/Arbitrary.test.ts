@@ -62,6 +62,265 @@ describe("Arbitrary", () => {
         assert.isTrue(first.every((value) => value.length === 8))
       }))
 
+    it.effect("uses a Schema-local arbitrary inside a containing Struct", () =>
+      Effect.gen(function*() {
+        const names = Arbitrary.schema(Schema.Literals(["Ada Lovelace", "Grace Hopper"]))
+        const Name = Schema.NonEmptyString.annotate({ arbitrary: () => names })
+        const Person = Schema.Struct({ name: Name, age: Schema.Int })
+
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Person), {
+          count: 100,
+          maxDiscards: 0,
+          seed: "schema-local-arbitrary"
+        })
+
+        assert.isTrue(values.every(Schema.is(Person)))
+        assert.isTrue(values.every((person) => person.name === "Ada Lovelace" || person.name === "Grace Hopper"))
+      }))
+
+    it.effect("applies checks once to roots from a Schema-local arbitrary", () =>
+      Effect.gen(function*() {
+        let checks = 0
+        let factories = 0
+        const schema = Schema.Int.check(Schema.makeFilter((value) => {
+          checks++
+          return value === 100
+        })).annotate({
+          arbitrary: () => {
+            factories++
+            return Arbitrary.schema(Schema.Literal(100))
+          }
+        })
+        const arbitrary = Arbitrary.schema(schema)
+        assert.strictEqual(factories, 1)
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
+          count: 1,
+          maxDiscards: 0,
+          seed: "schema-local-check-once"
+        })
+
+        assert.deepStrictEqual(values, [100])
+        assert.strictEqual(checks, 1)
+        assert.strictEqual(factories, 1)
+      }))
+
+    it.effect("promotes valid shrink descendants and replays a Schema-local arbitrary", () =>
+      Effect.gen(function*() {
+        const replacement = Arbitrary.schema(
+          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))
+        )
+        const schema = Schema.Int.check(
+          Schema.makeFilter((value) => value === 100 || value === 26)
+        ).annotate({ arbitrary: () => replacement })
+        const arbitrary = Arbitrary.schema(schema)
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
+          runs: 1,
+          maxDiscards: 0,
+          seed: 47,
+          size: 10
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 100)
+          assert.strictEqual(result.counterexample, 26)
+          assert.strictEqual(result.shrinks, 1)
+          const replayed = yield* Arbitrary.checkEffect(arbitrary, () => false, { replay: result.replay })
+          assert.strictEqual(replayed._tag, "Falsified")
+          if (replayed._tag === "Falsified") {
+            assert.strictEqual(replayed.initialInput, result.initialInput)
+            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.strictEqual(replayed.shrinks, result.shrinks)
+          }
+        }
+      }))
+
+    it.effect("bounds exhaustion from a Schema-local arbitrary", () =>
+      Effect.gen(function*() {
+        const schema = Schema.NonEmptyString.annotate({
+          arbitrary: () => Arbitrary.schema(Schema.Literal(""))
+        })
+        const arbitrary = Arbitrary.schema(schema)
+        const sampled = yield* Effect.result(Arbitrary.sampleEffect(arbitrary, {
+          count: 1,
+          maxDiscards: 2,
+          seed: "schema-local-exhaustion"
+        }))
+        const checked = yield* Arbitrary.checkEffect(arbitrary, () => true, {
+          runs: 1,
+          maxDiscards: 2,
+          seed: "schema-local-exhaustion"
+        })
+
+        assert.isTrue(Result.isFailure(sampled))
+        if (Result.isFailure(sampled)) {
+          assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+        }
+        assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+      }))
+
+    it.effect("resolves Schema-local arbitrary annotations from outermost check inward", () =>
+      Effect.gen(function*() {
+        const first = Arbitrary.schema(Schema.Literal("first"))
+        const second = Arbitrary.schema(Schema.Literal("second"))
+        const annotationAfterCheck = Schema.String.check(Schema.isPattern(/^first$/)).annotate({
+          arbitrary: () => first
+        })
+        const checkAfterAnnotation = Schema.String.annotate({ arbitrary: () => first }).check(
+          Schema.isPattern(/^first$/)
+        )
+        const outermost = Schema.String.annotate({ arbitrary: () => first }).check(
+          Schema.isPattern(/^second$/)
+        ).annotate({ arbitrary: () => second })
+        const repeated = Schema.String.annotate({ arbitrary: () => first }).annotate({ arbitrary: () => second })
+        const cleared = Schema.String.annotate({ arbitrary: () => first }).check(
+          Schema.isPattern(/^default$/)
+        ).annotate({ arbitrary: undefined })
+
+        const options = { count: 1, maxDiscards: 0, seed: "schema-annotation-order" } as const
+        assert.deepStrictEqual(yield* Arbitrary.sampleEffect(Arbitrary.schema(annotationAfterCheck), options), [
+          "first"
+        ])
+        assert.deepStrictEqual(yield* Arbitrary.sampleEffect(Arbitrary.schema(checkAfterAnnotation), options), [
+          "first"
+        ])
+        assert.deepStrictEqual(yield* Arbitrary.sampleEffect(Arbitrary.schema(outermost), options), ["second"])
+        assert.deepStrictEqual(yield* Arbitrary.sampleEffect(Arbitrary.schema(repeated), options), ["second"])
+        assert.deepStrictEqual(yield* Arbitrary.sampleEffect(Arbitrary.schema(cleared), options), ["default"])
+      }))
+
+    it.effect("keeps recursive replacement compilers opaque", () =>
+      Effect.gen(function*() {
+        type Node = null | { readonly next: Node }
+        const Node: Schema.Codec<Node> = Schema.Union([
+          Schema.Null,
+          Schema.Struct({ next: Schema.suspend(() => Node) })
+        ])
+        const replacement = Arbitrary.schema(Node)
+        const overridden = Node.annotate({ arbitrary: () => replacement })
+
+        const options = { count: 30, maxDiscards: 0, seed: "opaque-recursive-arbitrary", size: 5 } as const
+        const expected = yield* Arbitrary.sampleEffect(replacement, options)
+        const actual = yield* Arbitrary.sampleEffect(Arbitrary.schema(overridden), options)
+
+        assert.deepStrictEqual(actual, expected)
+        assert.isTrue(actual.every(Schema.is(Node)))
+      }))
+
+    it.effect("uses Schema-local arbitraries in recursive and mutually recursive containing Schemas", () =>
+      Effect.gen(function*() {
+        const Name = Schema.NonEmptyString.annotate({
+          arbitrary: () => Arbitrary.schema(Schema.Literal("Ada"))
+        })
+        interface Tree {
+          readonly name: string
+          readonly children: ReadonlyArray<Tree>
+        }
+        const Tree: Schema.Codec<Tree> = Schema.Struct({
+          name: Name,
+          children: Schema.Array(Schema.suspend(() => Tree)).check(Schema.isMaxLength(2))
+        })
+        interface A {
+          readonly _tag: "A"
+          readonly name: string
+          readonly next: B | null
+        }
+        interface B {
+          readonly _tag: "B"
+          readonly name: string
+          readonly next: A | null
+        }
+        let A!: Schema.Codec<A>
+        let B!: Schema.Codec<B>
+        A = Schema.Struct({
+          _tag: Schema.Literal("A"),
+          name: Name,
+          next: Schema.NullOr(Schema.suspend(() => B))
+        })
+        B = Schema.Struct({
+          _tag: Schema.Literal("B"),
+          name: Name,
+          next: Schema.NullOr(Schema.suspend(() => A))
+        })
+
+        const trees = yield* Arbitrary.sampleEffect(Arbitrary.schema(Tree), {
+          count: 30,
+          maxDiscards: 0,
+          seed: "recursive-schema-local-arbitrary",
+          size: 5
+        })
+        const mutual = yield* Arbitrary.sampleEffect(Arbitrary.schema(A), {
+          count: 30,
+          maxDiscards: 0,
+          seed: "mutual-schema-local-arbitrary",
+          size: 5
+        })
+        const checkTree = (tree: Tree): boolean => tree.name === "Ada" && tree.children.every(checkTree)
+        const checkA = (value: A | B | null): boolean => value === null || value.name === "Ada" && checkA(value.next)
+
+        assert.isTrue(trees.every(checkTree))
+        assert.isTrue(mutual.every(checkA))
+      }))
+
+    it.effect("lets an annotation replace an otherwise unsupported Declaration", () =>
+      Effect.gen(function*() {
+        let validations = 0
+        const Opaque = Schema.declare<string>((_input): _input is string => {
+          validations++
+          return false
+        })
+        assert.throws(() => Arbitrary.schema(Opaque), /Unable to derive an arbitrary for an unsupported Declaration/)
+        const annotated = Opaque.annotate({
+          arbitrary: () => Arbitrary.schema(Schema.Literal("value"))
+        })
+
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(annotated), {
+          count: 3,
+          maxDiscards: 0,
+          seed: "unsupported-declaration-override"
+        })
+        assert.deepStrictEqual(values, ["value", "value", "value"])
+        assert.strictEqual(validations, 0)
+      }))
+
+    it("rejects recursive Schema-local arbitrary factories eagerly", () => {
+      let schema!: Schema.Codec<string>
+      schema = Schema.String.annotate({
+        arbitrary: () => Arbitrary.schema(schema)
+      })
+
+      assert.throws(
+        () => Arbitrary.schema(schema),
+        /Unable to derive an arbitrary for a recursive arbitrary annotation/
+      )
+    })
+
+    it.effect("lets a containing Schema-local arbitrary replace its children", () =>
+      Effect.gen(function*() {
+        let childFactories = 0
+        const Name = Schema.String.annotate({
+          arbitrary: () => {
+            childFactories++
+            return Arbitrary.schema(Schema.Literal("child"))
+          }
+        })
+        const Person = Schema.Struct({ name: Name, age: Schema.Int }).annotate({
+          arbitrary: () =>
+            Arbitrary.schema(Schema.Struct({
+              name: Schema.Literal("parent"),
+              age: Schema.Literal(1)
+            }))
+        })
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Person), {
+          count: 1,
+          maxDiscards: 0,
+          seed: "containing-schema-local-arbitrary"
+        })
+
+        assert.deepStrictEqual(values, [{ name: "parent", age: 1 }])
+        assert.strictEqual(childFactories, 0)
+      }))
+
     it.effect("constructs strings for the regular pattern subset", () =>
       Effect.gen(function*() {
         const schemas = [

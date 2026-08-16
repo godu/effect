@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema, SchemaAST, SchemaRepresentation } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { throws } from "../../utils/assert.ts"
 
 function makeStringProperty<const Name>(name: Name) {
@@ -110,6 +111,7 @@ describe("SchemaRepresentation.toJson", () => {
   it("removes live callbacks from a custom declaration", () => {
     const schema = Schema.declare<string>((input): input is string => typeof input === "string", {
       description: "custom",
+      arbitrary: () => Arbitrary.schema(Schema.Literal("value")),
       representation: { id: "acme/schema/custom", payload: null },
       toCode: () => ({ runtime: "Custom", Type: "string" }),
       toJsonSchema: () => ({ type: "string" })

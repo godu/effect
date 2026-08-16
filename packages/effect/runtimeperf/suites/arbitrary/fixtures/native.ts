@@ -226,6 +226,22 @@ export const unionSample128 = () => {
   }
 }
 
+export const schemaLocalArbitrarySample128 = () => {
+  const Name = Schema.NonEmptyString.annotate({
+    arbitrary: () => Arbitrary.schema(Schema.Literals(["Ada", "Grace"]))
+  })
+  const schema = Schema.Struct({ name: Name, age: Schema.Int })
+  const arbitrary = Arbitrary.schema(schema)
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<{ readonly name: string; readonly age: number }>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value.name === "Ada" || value.name === "Grace"), true)
+    }
+  }
+}
+
 export const checkPass100 = () => {
   const arbitrary = Arbitrary.schema(Schema.Int)
   const program = Arbitrary.checkEffect(arbitrary, () => true, { runs: 100, seed, size })

@@ -8,6 +8,7 @@ import * as Order from "../../Order.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
 import * as SchemaParser from "../../SchemaParser.ts"
+import type { Arbitrary } from "../../unstable/arbitrary/Arbitrary.ts"
 import { effectIsExit } from "../effect.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
@@ -26,6 +27,7 @@ interface Checks {
 const infinity = Number.POSITIVE_INFINITY
 const finiteNumberConstraint: Constraint = { number: "finite" }
 const optionMatch = { onFailure: Option.none, onSuccess: Option.some }
+const activeArbitraryAnnotations = new WeakSet<SchemaAST.AST>()
 
 const optionComputation = <A, E, R>(self: Effect.Effect<A, E, R>): Model.Computation<Option.Option<A>> => {
   const result = Effect.matchEager(self, optionMatch) as Effect.Effect<Option.Option<A>>
@@ -34,6 +36,38 @@ const optionComputation = <A, E, R>(self: Effect.Effect<A, E, R>): Model.Computa
 
 function arbitraryError(what: string, path: ReadonlyArray<PropertyKey>) {
   return errorWithPath(`Unable to derive an arbitrary for ${what}`, path)
+}
+
+function resolveArbitrary(ast: SchemaAST.AST): (() => Arbitrary<any>) | undefined {
+  if (ast.checks !== undefined) {
+    for (let index = ast.checks.length - 1; index >= 0; index--) {
+      const annotations = ast.checks[index].annotations
+      if (annotations !== undefined && Object.hasOwn(annotations, "arbitrary")) {
+        return annotations.arbitrary as (() => Arbitrary<any>) | undefined
+      }
+    }
+  }
+  return ast.annotations !== undefined && Object.hasOwn(ast.annotations, "arbitrary")
+    ? ast.annotations.arbitrary as (() => Arbitrary<any>) | undefined
+    : undefined
+}
+
+function compileArbitraryAnnotation(
+  ast: SchemaAST.AST,
+  make: () => Arbitrary<any>,
+  path: ReadonlyArray<PropertyKey>
+): Model.Compiled<any> {
+  if (activeArbitraryAnnotations.has(ast)) {
+    throw arbitraryError("a recursive arbitrary annotation", path)
+  }
+  activeArbitraryAnnotations.add(ast)
+  let arbitrary: Arbitrary<any>
+  try {
+    arbitrary = make()
+  } finally {
+    activeArbitraryAnnotations.delete(ast)
+  }
+  return Model.makeCompiled([], () => arbitrary.gen.minCost, arbitrary.gen.generate)
 }
 
 function sumCosts(costs: Iterable<number>): number {
@@ -1162,8 +1196,11 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     pending.push(() => {
       const checks = collectChecks(ast.checks, inherited)
       const baseAst = ast.checks === undefined ? ast : SchemaAST.replaceChecks(ast, undefined)
-      const base = compileBase(baseAst, path, checks.constraint)
-      if (baseAst._tag === "Suspend") {
+      const arbitrary = resolveArbitrary(ast)
+      const base = arbitrary === undefined
+        ? compileBase(baseAst, path, checks.constraint)
+        : compileArbitraryAnnotation(ast, arbitrary, path)
+      if (arbitrary === undefined && baseAst._tag === "Suspend") {
         const body = base.dependencies[0]
         placeholder.dependencies = [body]
         placeholder.computeMinCost = () => {

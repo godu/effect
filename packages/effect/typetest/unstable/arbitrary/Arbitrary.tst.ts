@@ -51,6 +51,18 @@ describe("Arbitrary", () => {
     ).type.toBe<Arbitrary.Arbitrary<string | number>>()
   })
 
+  it("types the Schema-local arbitrary annotation from the decoded type", () => {
+    const strings = Arbitrary.schema(Schema.String)
+    const annotated = Schema.NonEmptyString.annotate({ arbitrary: () => strings })
+
+    expect(Schema.resolveAnnotations(annotated)?.arbitrary).type.toBe<
+      (() => Arbitrary.Arbitrary<string>) | undefined
+    >()
+
+    // @ts-expect-error Type 'Arbitrary<number>'
+    Schema.String.annotate({ arbitrary: () => Arbitrary.schema(Schema.Number) })
+  })
+
   it("types toCodecArbitrary inputs from the declaration target and decoded type parameters", () => {
     interface Box {
       readonly value: number

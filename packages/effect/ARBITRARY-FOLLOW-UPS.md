@@ -18,7 +18,7 @@ The public interface is growing in this order:
 schema
   -> map, filter, filterMap [implemented]
   -> Union [implemented]
-  -> Schema-local override
+  -> Schema-local `arbitrary` annotation
   -> flatMap
 ```
 
@@ -27,8 +27,8 @@ catalog of primitive or collection constructors alongside Schema.
 
 The following architectural decisions are settled:
 
-- Schema-local customization is a direct replacement of the generator for the exact annotated Schema, not a callback
-  that transforms an implicit default Arbitrary;
+- Schema-local customization uses a public `arbitrary` factory that returns a complete replacement generator for the
+  exact annotated Schema; the factory does not receive the implicit default Arbitrary;
 - checks directly attached to the annotated node remain authoritative and are applied once as residual filters;
 - a Schema that captures an external generator such as Faker accepts that dependency's production bundle cost;
 - static choice is named `Union` and receives its members as an array, matching `Schema.Union`;
@@ -44,7 +44,7 @@ The following architectural decisions are settled:
 | P1       | Private `Generator` seam                | Complete                           | Schema compiler metadata stays local to the compiler       |
 | P2       | `map`, `filter`, and `filterMap`        | Complete                           | General transformation and bounded residual rejection      |
 | P3       | `Union` and seeded external generators  | `Union` complete; adapter userland | Static choice and a userland Faker integration             |
-| P4       | Direct Schema-local override            | Pending                            | Nested distribution customization without paths/registries |
+| P4       | Schema-local `arbitrary` annotation     | Complete                           | Nested distribution customization without paths/registries |
 | P5       | Single-pass `flatMap`                   | Pending                            | Dependent generation with deterministic shrinking/replay   |
 | P6       | Quality and optimization research       | Pending                            | Diagnostics, generation quality, and later optimizations   |
 
@@ -57,7 +57,7 @@ Use the current branch as a baseline, then make the existing bundle regression t
 
 1. run the complete Arbitrary runtime-performance family on the current `HEAD` and record the commit and result
    artifact;
-2. retain all 16 warm native/fast-check comparisons and the existing cold scenario;
+2. retain all 21 warm native/fast-check comparisons and the existing cold scenario;
 3. run the complete bundle comparison and record exact results for `config.ts` and `schema-toArbitrary.ts`;
 4. retain the measured `config.ts` result as an accepted cost of keeping `toCodecArbitrary` local and uniform;
 5. use the current commit as the bundle baseline for subsequent slices;
@@ -68,7 +68,7 @@ accepted: it preserves one uniform annotation protocol, and the marginal cost is
 bundle. Do not introduce a URL-specific palette result or move every built-in Link into the palette to recover it.
 
 The performance table in the current changeset is a historical reference, not the baseline for these follow-ups. The
-latest recorded measurements outperform the equivalent fast-check fixture in all 16 reported warm scenarios, so
+latest recorded measurements outperform the equivalent fast-check fixture in all 21 reported warm scenarios, so
 further optimization work must be driven by a new measurement rather than by the old profiling tasks.
 
 Exit gate:
@@ -270,7 +270,7 @@ Exit gate:
 - runtime comparison with equivalent static-choice generation;
 - unrelated Effect and Schema bundle fixtures remain unchanged.
 
-## P4: direct Schema-local override
+## P4: Schema-local `arbitrary` annotation
 
 ### Required experience
 
@@ -283,11 +283,9 @@ const FixedNames = Arbitrary.schema(
 
 const FakerNames = fromFaker((faker) => faker.person.fullName())
 
-export const Name = Schema.NonEmptyString.pipe(
-  Arbitrary.override(
-    Arbitrary.Union([FixedNames, FakerNames])
-  )
-)
+export const Name = Schema.NonEmptyString.annotate({
+  arbitrary: () => Arbitrary.Union([FixedNames, FakerNames])
+})
 
 export const Person = Schema.Struct({
   name: Name,
@@ -300,57 +298,68 @@ const PersonArbitrary = Arbitrary.schema(Person)
 Only the `name` occurrence uses the custom distribution. Other `Schema.String` or `Schema.NonEmptyString` occurrences
 continue to use standard generation.
 
-The helper belongs to `effect/unstable/arbitrary/Arbitrary` and stores a private annotation. Stable Schema source must
-not import or expose the unstable `Arbitrary` type. The annotation must be excluded from Schema persistence.
+The `effect/unstable/arbitrary/Arbitrary` module augments `Schema.Annotations.Bottom<T, TypeParameters>` with a public,
+type-safe `arbitrary?: () => Arbitrary<T>` annotation. `Schema.ts` does not import the unstable module, and no separate
+`Arbitrary.override` helper is exposed. The annotation must be excluded from Schema persistence because it contains an
+executable generator rather than serializable metadata.
 
 ### Semantics
 
-The override replaces the default generator for that exact Schema. For `Schema.NonEmptyString`, the compiler
-conceptually:
+The annotation factory is evaluated eagerly by `Arbitrary.schema` and replaces the default generator for that exact
+Schema. For `Schema.NonEmptyString`, the compiler conceptually:
 
-1. resolves the override on the annotated Schema;
-2. uses the supplied `Arbitrary<string>` instead of the ordinary `String` generator;
+1. searches for `arbitrary` from the outermost check toward the inner checks and finally the base node;
+2. evaluates the first factory it finds and uses its `Arbitrary<string>` instead of the ordinary `String` generator;
 3. applies the `NonEmptyString` check once to roots and shrink nodes.
+
+An explicitly present `arbitrary: undefined` stops the search and clears an inner override. All checks on the node are
+applied, including checks outside the annotation. If the containing Schema has its own override, it replaces the whole
+subtree and child overrides are not evaluated.
 
 The replacement is trusted to produce the declared Type. The compiler does not run the complete Schema parser for
 every sample. It continues to enforce the checks directly attached to the annotated node, so a replacement cannot
 bypass `NonEmptyString`, a pattern, or another local refinement on that node. Structural correctness and checks nested
 inside a composite Type remain the replacement Arbitrary's contract.
 
-The initial interface deliberately does not expose the compiler's default Arbitrary to the override. Combining an
-already derived `Arbitrary.schema(BaseName)` with the replacement would cause the outer compiler to run `BaseName`'s
-checks again. Supporting augmentation without duplicate validation would require private branch provenance and is a
-separate follow-up. The approved fixed-names/Faker use case supplies a complete replacement and does not require it.
+The initial factory takes no arguments. It does not expose the compiler's default Arbitrary, recognized constraints,
+or decoded type-parameter Schemas. An input object can be added later without invalidating existing zero-argument
+factories. Combining an already derived `Arbitrary.schema(BaseName)` with the replacement would cause the outer
+compiler to run `BaseName`'s checks again. Supporting augmentation without duplicate validation would require private
+branch provenance and is a separate follow-up. The approved fixed-names/Faker use case supplies a complete replacement
+and does not require it.
+
+The factory must not call `Arbitrary.schema` on the same annotated Schema. The compiler detects this self-reference
+and throws during eager derivation instead of recursing until the JavaScript stack overflows.
 
 ### Scope and bundle consequences
 
-Schemas are immutable. The override must be applied before `Name` is embedded in `Person`; annotating another `Name`
-value later cannot alter the AST already stored by `Person`. A plain alias such as `const Name = Schema.String` also has
-no runtime identity distinct from another use of the same singleton until a new annotated Schema is created.
+Schemas are immutable. The annotation must be applied before `Name` is embedded in `Person`; annotating another `Name`
+value later cannot alter the AST already stored by `Person`. A plain alias such as `const Name = Schema.String` also
+has no runtime identity distinct from another use of the same singleton until a new annotated Schema is created.
 
-An override that captures Faker makes Faker and its locale data reachable from the production module exporting that
-Schema. This is an accepted opt-in cost. Avoiding it would require a provider, registry, path override, or rebuilding
-the containing Schema, none of which belong to the initial interface.
+An `arbitrary` annotation that captures Faker makes Faker and its locale data reachable from the production module
+exporting that Schema. This is an accepted opt-in cost. Avoiding it would require a provider, registry, path override,
+or rebuilding the containing Schema, none of which belong to the initial interface.
 
-### Compiler spike and verification
+### Compiler integration and verification
 
-Before exposing `override`, prototype the compiler integration against:
+The compiler integration is verified against:
 
 - a checked leaf nested in `Person`;
 - root and shrink outputs that fail `NonEmptyString`;
 - a custom check, verifying that it runs once;
-- an override inside recursive and mutually recursive containing Schemas;
-- an override supplied by `Arbitrary.schema` on a recursive Schema;
+- an annotation inside recursive and mutually recursive containing Schemas;
+- a replacement supplied by `Arbitrary.schema` on a recursive Schema;
 - eager derivation errors and accidental self-reference;
 - deterministic sampling, shrinking, and replay;
 - bounded exhaustion when the replacement has zero density;
-- annotations placed before and after checks, plus repeated overrides; the precedence rule must be presented for
-  approval if it is not already implied by ordinary Schema annotation ordering;
+- `arbitrary` annotations placed before and after checks, repeated annotations, explicit clearing, and outermost-first
+  precedence;
 - exclusion from persisted Schema annotations.
 
-The private wrapper must preserve the replacement's finalized `minCost`. A replacement derived from a recursive Schema
-already owns its finalized compilation graph. The prototype must verify that it can remain opaque to the containing
-Schema compiler; if it cannot, stop rather than adding graph metadata to the public `Arbitrary` interface.
+The compiler wrapper must preserve the replacement's finalized `minCost`. A replacement derived from a recursive
+Schema already owns its finalized compilation graph. The prototype must verify that it can remain opaque to the
+containing Schema compiler; if it cannot, stop rather than adding graph metadata to the public `Arbitrary` interface.
 
 Exit gate:
 
@@ -359,7 +368,21 @@ Exit gate:
 - recursive containing Schemas retain productivity;
 - no full-parser validation is added per sample;
 - Schema fixtures that do not opt into the override are bundle-invariant;
-- the opting-in fixture reports the complete Arbitrary and Faker cost.
+- the opting-in fixture reports the complete Arbitrary override cost; an external generator remains an explicit
+  application dependency.
+
+Implementation result: the unstable Arbitrary module augments the public Schema annotation type without introducing
+a runtime dependency from `Schema.ts`. The compiler resolves factories from the outermost check inward, supports
+explicit clearing, applies all local checks once, rejects self-reference eagerly, and treats parent replacements as
+opaque subtrees. Runtime tests cover checked leaves, recursive and mutually recursive containers, opaque recursive
+replacements, shrink promotion, replay, exhaustion, precedence, clearing, and persistence; typetests cover the precise
+factory result type.
+
+In the complete five-round Node 24 matrix, 128 nested `Person` samples using a Schema-local replacement measured
+25.70 microseconds versus 80.96 microseconds for the equivalent hand-written fast-check v4 arbitrary. All 22 warm
+native scenarios remained faster than their fast-check fixtures. Against the pre-slice commit, `config.ts` was
+unchanged, while `schema-toArbitrary.ts`, `arbitrary-combinators.ts`, and the opting-in `arbitrary-schema-local.ts`
+fixtures grew by 0.14, 0.13, and 0.14 KB gzip respectively.
 
 ## P5: single-pass `flatMap`
 

@@ -82,6 +82,64 @@ const identifier = Arbitrary.Union([
 current recursion budget. During shrinking, a branch with a higher minimum cost first tries the earliest cheaper
 member, then continues through its own shrink tree. The array must contain at least one member.
 
+### Integrating Faker
+
+External deterministic generators can be integrated by generating their seed as ordinary data and mapping it into a
+fresh, locally seeded instance. Effect does not depend on Faker or expose its private Arbitrary PRNG:
+
+```ts
+import { base, en, Faker, generateMersenne53Randomizer } from "@faker-js/faker"
+import { Effect, Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const FakerSeed = Arbitrary.schema(
+  Schema.Finite.check(Schema.isUint32())
+)
+
+const fromFaker = <A>(generate: (faker: Faker) => A): Arbitrary.Arbitrary<A> =>
+  FakerSeed.pipe(
+    Arbitrary.map((seed) => {
+      const faker = new Faker({
+        locale: [en, base],
+        randomizer: generateMersenne53Randomizer(seed)
+      })
+      return generate(faker)
+    })
+  )
+
+const FixedNames = Arbitrary.schema(
+  Schema.Literals(["Ada Lovelace", "Grace Hopper", "Edsger Dijkstra"])
+)
+
+const FakerNames = fromFaker((faker) => faker.person.fullName())
+
+export const Name = Schema.NonEmptyString.annotate({
+  arbitrary: () => Arbitrary.Union([FixedNames, FakerNames])
+})
+
+export const Person = Schema.Struct({
+  name: Name,
+  age: Schema.Int
+})
+
+const people = await Effect.runPromise(
+  Arbitrary.sampleEffect(Arbitrary.schema(Person), { count: 20, seed: "people" })
+)
+```
+
+The factory is evaluated eagerly when `Arbitrary.schema(Person)` is derived. The replacement changes only the exact
+annotated occurrence, so other string fields keep their standard distribution. Every check attached to `Name`,
+including checks added after the annotation, is still applied once to generated roots and shrink candidates.
+
+If more than one `arbitrary` annotation occurs in a check chain, the outermost one wins. Setting an outer annotation to
+`undefined` clears an inner override. An override on a containing Schema replaces its complete subtree, so child
+override factories are not evaluated.
+
+A fresh Faker instance for each generated or shrink value prevents mutable Faker state from leaking across replay or
+concurrent checks. Reproduction requires the Faker version, locale data, callback, and other inputs to remain fixed.
+Date-related Faker generators should also receive a fixed reference date. Shrinking the seed is deterministic, but it
+does not guarantee a semantically simpler generated value.
+
 Combinator callbacks must be synchronous, deterministic, terminating, and must not mutate generated values. They may
 be evaluated again during shrinking and replay. A thrown exception remains a defect of the `Effect` returned by
 `sampleEffect` or `checkEffect`.
@@ -345,9 +403,9 @@ includes the minimized counterexample and replay token.
 
 ## Current Scope
 
-The unstable module intentionally exposes only Schema derivation, sampling, and checking. It does not currently expose:
+The unstable module intentionally keeps its constructor surface small. It does not currently expose:
 
-- a public arbitrary constructor catalog or arbitrary combinators;
+- a public arbitrary constructor catalog or dependent `flatMap`;
 - assertion formatting outside the `@effect/vitest` integration;
 - parallel property evaluation;
 - a replay compatibility guarantee across releases.

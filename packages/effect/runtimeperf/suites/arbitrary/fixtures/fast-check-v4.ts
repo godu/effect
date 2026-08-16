@@ -243,6 +243,20 @@ export const unionSample128 = () => {
   }
 }
 
+export const schemaLocalArbitrarySample128 = () => {
+  const arbitrary = FastCheck.record({
+    name: FastCheck.constantFrom("Ada", "Grace"),
+    age: FastCheck.integer()
+  })
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: (values: ReadonlyArray<{ readonly name: string; readonly age: number }>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value.name === "Ada" || value.name === "Grace"), true)
+    }
+  }
+}
+
 export const checkPass100 = () => {
   const arbitrary = FastCheck.integer()
   const property = FastCheck.property(arbitrary, () => true)
