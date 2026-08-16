@@ -7,12 +7,13 @@ Add the experimental Schema-first `effect/unstable/arbitrary/Arbitrary` module f
 fast-check. `Arbitrary.schema` derives an opaque arbitrary from the decoded Schema `Type`, `Arbitrary.sampleEffect`
 provides interruptible sampling with typed exhaustion, and `Arbitrary.checkEffect` returns structured property results.
 The initial implementation supports bounded discards, shrinking, replay, and recursive and mutually recursive Schemas.
-`Arbitrary.isArbitrary` identifies values through the module's nominal protocol.
+`SampleError` and `Exhausted` include the effective seed so discarded runs remain reproducible even when the caller did
+not provide one. `Arbitrary.isArbitrary` identifies values through the module's nominal protocol.
 
 Add `Arbitrary.map`, `Arbitrary.flatMap`, `Arbitrary.filter`, `Arbitrary.filterMap`, and `Arbitrary.Union` for composing
 derived Arbitraries without exposing a second catalog of primitive constructors. Filtering remains bounded and
 promotes valid shrink descendants through rejected nodes. `maxShrinks` bounds every inspected shrink candidate,
-including candidates rejected before property evaluation, while retaining the best counterexample found when the
+including candidates rejected before property evaluation, while retaining the best shrunk input found when the
 budget is exhausted. `flatMap` provides deterministic dependent generation, source-first shrinking, post-source PRNG
 checkpoints, and one shared residual recursion budget. `Union` uses the same budget, selection, and cross-branch
 shrinking policy as `Schema.Union`. Arbitrary values implement `Pipeable` for composition with data-last combinators.
@@ -36,7 +37,7 @@ Remove the fast-check bridge from the `effect` package, including `Schema.toArbi
 
 Migrate `TestSchema.Asserts.verifyLosslessTransformation` and `TestSchema.Asserts.arbitrary().verifyGeneration` to the
 native runner. Both methods now accept native check options directly, bound unsuccessful generation, and include the
-shrunk counterexample and replay token in property failures.
+shrunk input and replay token in property failures.
 
 Use the Arbitrary runner for all `@effect/vitest` property tests. Property inputs may combine Schemas and Arbitraries,
 and check options are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are

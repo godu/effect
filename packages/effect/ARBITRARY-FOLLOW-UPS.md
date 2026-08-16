@@ -77,7 +77,7 @@ scenarios, so further optimization work had to be driven by a new measurement ra
 Exit gate:
 
 - reproducible before/after runtime and bundle baselines tied to exact commits;
-- existing seeded samples, counterexamples, shrink counts, and replay tests recorded as characterization tests;
+- existing seeded samples, shrunk inputs, shrink counts, and replay tests recorded as characterization tests;
 - no production change for the accepted `config.ts` delta.
 
 ## P1: private `Generator` seam
@@ -538,14 +538,14 @@ it produces a production slice or is intentionally closed without changes.
    a typed property failure while re-emitting interruption. Focused tests verify shrinking for a synchronous defect and
    an assertion defect, plus single-evaluation interruption; public JSDoc and both Arbitrary and Vitest guides document
    the policy.
-2. **Replay decoding is partial and unversioned.** A replay token is an opaque string publicly but an unchecked JSON
-   tuple internally. Malformed values can defect, the format has no version, and replay identifies generation and
-   shrink coordinates rather than a semantic failure. Decide the validated format, mismatch reasons, and compatibility
-   promise before stabilization.
-3. **Exhaustion and shrink diagnostics are too weak.** `SampleError` and `Exhausted` do not report the effective seed or
-   origin of discards, and `Falsified` does not reveal whether the shrink budget truncated the search. Design an opt-in
-   or low-allocation diagnostic model without adding another error parameter to `Arbitrary` or penalizing the common
-   generation path.
+2. **Closed without changes: replay decoding remains partial and unversioned.** Replay tokens are operational values
+   produced by this unstable module, and compatibility across releases is already excluded. Validating arbitrary token
+   strings, versioning the private tuple, and expanding `ReplayMismatch` would add interface and verification cost
+   without enough leverage. Malformed tokens may therefore continue to defect.
+3. **Resolved: exhaustion reports the effective seed.** `SampleError` and `Exhausted` retain the resolved seed, so an
+   automatically seeded exhausted run can be reproduced directly. Structured discard origins, inspected-shrink counts,
+   and a diagnostic mode remain excluded: they would widen the interface or add rejection-path work without a concrete
+   consumer.
 4. **The public Declaration seam exposes Effect-owned compiler vocabulary.** `GenerationConstraint` is a flat bag of
    unrelated optional fields, while `Schemas` contains both the general `Array(Item, options)` operation and named
    Effect built-ins. Decide which portion is a real interface for third-party Declaration authors and which portion
@@ -591,9 +591,9 @@ After the review findings above are resolved, these remain separate research pro
 1. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
 2. profile decoded collection and Declaration Links only if a new baseline identifies a regression;
 3. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
-4. evaluate automatic persistence and reuse of concrete counterexamples last.
+4. evaluate automatic persistence and reuse of concrete failing inputs last.
 
-Concrete counterexample persistence is distinct from replay-token persistence. After `map` or `flatMap`, an Arbitrary
+Concrete failing-input persistence is distinct from replay-token persistence. After `map` or `flatMap`, an Arbitrary
 may no longer have a Schema or codec capable of serializing its output, while the existing opaque replay token remains
 persistable.
 

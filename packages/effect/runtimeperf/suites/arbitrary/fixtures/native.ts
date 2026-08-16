@@ -243,7 +243,7 @@ export const filterCheckFalsifyAndShrink = () => {
       assert.equal(result._tag, "Falsified")
       if (result._tag !== "Falsified") return
       assert.equal(result.initialInput, 8)
-      assert.equal(result.counterexample, 4)
+      assert.equal(result.shrunkInput, 4)
       assert.equal(result.shrinks, 2)
     }
   }
@@ -300,8 +300,8 @@ export const flatMapCheckFalsifyAndShrink = () => {
     validate: (result: Arbitrary.CheckResult<FlatMapValue, never>) => {
       assert.equal(result._tag, "Falsified")
       if (result._tag !== "Falsified") return
-      assert.equal(result.counterexample.length, 1)
-      assert.equal(result.counterexample.values.length, 1)
+      assert.equal(result.shrunkInput.length, 1)
+      assert.equal(result.shrunkInput.values.length, 1)
     }
   }
 }
@@ -318,8 +318,8 @@ export const flatMapCheckReplay = () => {
     validate: (result: Arbitrary.CheckResult<FlatMapValue, never>) => {
       assert.equal(result._tag, "Falsified")
       if (result._tag !== "Falsified") return
-      assert.equal(result.counterexample.length, 1)
-      assert.equal(result.counterexample.values.length, 1)
+      assert.equal(result.shrunkInput.length, 1)
+      assert.equal(result.shrunkInput.values.length, 1)
     }
   }
 }
@@ -354,7 +354,7 @@ export const checkFalsifyAndShrink = () => {
       assert.equal(result._tag, "Falsified")
       if (result._tag !== "Falsified") return
       assert.equal(result.initialInput, 1_000)
-      assert.equal(result.counterexample, 1)
+      assert.equal(result.shrunkInput, 1)
       assert.equal(result.shrinks, 1)
     }
   }
@@ -375,7 +375,7 @@ export const checkReplay = () => {
       assert.equal(result._tag, "Falsified")
       if (result._tag !== "Falsified") return
       assert.equal(result.initialInput, 1_000)
-      assert.equal(result.counterexample, 1)
+      assert.equal(result.shrunkInput, 1)
       assert.equal(result.shrinks, 1)
     }
   }

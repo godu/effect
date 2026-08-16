@@ -78,7 +78,7 @@ describe("TestSchema", () => {
     await asserts.verifyLosslessTransformation({ runs: 20, seed: "lossless" })
   })
 
-  it("verifyLosslessTransformation reports a native counterexample and replay", async () => {
+  it("verifyLosslessTransformation reports a shrunk input and replay", async () => {
     const schema = Schema.Number.pipe(
       Schema.decodeTo(
         Schema.Number,
@@ -92,7 +92,7 @@ describe("TestSchema", () => {
       (error) => {
         assert.instanceOf(error, Error)
         assert.match(error.message, /Property falsified/)
-        assert.match(error.message, /Counterexample:/)
+        assert.match(error.message, /Shrunk input:/)
         assert.match(error.message, /Replay:/)
       }
     )

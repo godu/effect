@@ -131,13 +131,13 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 100)
-          assert.strictEqual(result.counterexample, 26)
+          assert.strictEqual(result.shrunkInput, 26)
           assert.strictEqual(result.shrinks, 1)
           const replayed = yield* Arbitrary.checkEffect(arbitrary, () => false, { replay: result.replay })
           assert.strictEqual(replayed._tag, "Falsified")
           if (replayed._tag === "Falsified") {
             assert.strictEqual(replayed.initialInput, result.initialInput)
-            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.strictEqual(replayed.shrunkInput, result.shrunkInput)
             assert.strictEqual(replayed.shrinks, result.shrinks)
           }
         }
@@ -162,9 +162,19 @@ describe("Arbitrary", () => {
 
         assert.isTrue(Result.isFailure(sampled))
         if (Result.isFailure(sampled)) {
-          assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          assert.deepStrictEqual(sampled.failure, {
+            _tag: "SampleError",
+            generated: 0,
+            discards: 3,
+            seed: "schema-local-exhaustion"
+          })
         }
-        assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+        assert.deepStrictEqual(checked, {
+          _tag: "Exhausted",
+          runs: 0,
+          discards: 3,
+          seed: "schema-local-exhaustion"
+        })
       }))
 
     it.effect("resolves Schema-local arbitrary annotations from outermost check inward", () =>
@@ -441,7 +451,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.isAbove(result.shrinks, 0)
-          assert.match(result.counterexample.protocol, /^https?:$/)
+          assert.match(result.shrunkInput.protocol, /^https?:$/)
         }
       }))
 
@@ -481,7 +491,7 @@ describe("Arbitrary", () => {
           seed: "date-shrink"
         })
         assert.strictEqual(result._tag, "Falsified")
-        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.getTime(), 0)
+        if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput.getTime(), 0)
       }))
 
     it.effect("generates and shrinks BigDecimal declarations constructively", () =>
@@ -533,7 +543,7 @@ describe("Arbitrary", () => {
         })
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.isTrue(BigDecimal.Equivalence(result.counterexample, BigDecimal.make(0n, 0)))
+          assert.isTrue(BigDecimal.Equivalence(result.shrunkInput, BigDecimal.make(0n, 0)))
         }
       }))
 
@@ -573,7 +583,7 @@ describe("Arbitrary", () => {
           size: 10
         })
         assert.strictEqual(result._tag, "Falsified")
-        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.epochMilliseconds, 0)
+        if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput.epochMilliseconds, 0)
       }))
 
     it.effect("generates named and offset TimeZone declarations constructively", () =>
@@ -636,7 +646,7 @@ describe("Arbitrary", () => {
           size: 10
         })
         assert.strictEqual(result._tag, "Falsified")
-        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.epochMilliseconds, 0)
+        if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput.epochMilliseconds, 0)
       }))
 
     it.effect("generates and shrinks Uint8Array declarations through Array semantics", () =>
@@ -667,8 +677,8 @@ describe("Arbitrary", () => {
         })
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.instanceOf(result.counterexample, globalThis.Uint8Array)
-          assert.deepStrictEqual([...result.counterexample], [0, 0])
+          assert.instanceOf(result.shrunkInput, globalThis.Uint8Array)
+          assert.deepStrictEqual([...result.shrunkInput], [0, 0])
         }
       }))
 
@@ -745,7 +755,12 @@ describe("Arbitrary", () => {
 
         assert.isTrue(Result.isFailure(result))
         if (Result.isFailure(result)) {
-          assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          assert.deepStrictEqual(result.failure, {
+            _tag: "SampleError",
+            generated: 0,
+            discards: 3,
+            seed: "unsupported-pattern"
+          })
         }
       }))
 
@@ -784,7 +799,12 @@ describe("Arbitrary", () => {
 
           assert.isTrue(Result.isFailure(result))
           if (Result.isFailure(result)) {
-            assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+            assert.deepStrictEqual(result.failure, {
+              _tag: "SampleError",
+              generated: 0,
+              discards: 3,
+              seed: "incompatible-pattern-length"
+            })
           }
         }
       }))
@@ -804,7 +824,7 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(result._tag, "Falsified")
         assert.isTrue(evaluated.every(Schema.is(schema)))
-        if (result._tag === "Falsified") assert.strictEqual(result.counterexample.length, 4)
+        if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput.length, 4)
       }))
 
     it.effect("shrinks fixed-length String code units toward null", () =>
@@ -819,7 +839,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.notStrictEqual(result.initialInput, "\0\0\0")
-          assert.strictEqual(result.counterexample, "\0\0\0")
+          assert.strictEqual(result.shrunkInput, "\0\0\0")
         }
       }))
 
@@ -835,7 +855,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.notStrictEqual(result.initialInput, "b")
-          assert.strictEqual(result.counterexample, "b")
+          assert.strictEqual(result.shrunkInput, "b")
         }
       }))
 
@@ -851,7 +871,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.notStrictEqual(result.initialInput, "foo")
-          assert.strictEqual(result.counterexample, "foo")
+          assert.strictEqual(result.shrunkInput, "foo")
         }
       }))
 
@@ -1262,7 +1282,12 @@ describe("Arbitrary", () => {
 
         assert.isTrue(Result.isFailure(result))
         if (Result.isFailure(result)) {
-          assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          assert.deepStrictEqual(result.failure, {
+            _tag: "SampleError",
+            generated: 0,
+            discards: 3,
+            seed: "structural-unique"
+          })
         }
       }))
 
@@ -1277,7 +1302,7 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.isTrue(Schema.is(schema)(result.counterexample))
+          assert.isTrue(Schema.is(schema)(result.shrunkInput))
         }
       }))
 
@@ -1315,7 +1340,7 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.deepStrictEqual(result.counterexample, { "\0": 0 })
+          assert.deepStrictEqual(result.shrunkInput, { "\0": 0 })
         }
 
         const uniqueSchema = Schema.Record(
@@ -1330,7 +1355,7 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(uniqueResult._tag, "Falsified")
         if (uniqueResult._tag === "Falsified") {
-          const keys = Object.keys(uniqueResult.counterexample).map((key) => key.charCodeAt(0)).sort((a, b) => a - b)
+          const keys = Object.keys(uniqueResult.shrunkInput).map((key) => key.charCodeAt(0)).sort((a, b) => a - b)
           assert.deepStrictEqual(keys, [0, 1])
         }
       }))
@@ -1532,7 +1557,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 100)
-          assert.strictEqual(result.counterexample, 25)
+          assert.strictEqual(result.shrunkInput, 25)
           assert.strictEqual(result.shrinks, 1)
         }
       }))
@@ -1647,8 +1672,8 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.strictEqual(result.counterexample.size, 2)
-          assert.strictEqual(new Set(result.counterexample.keys()).size, result.counterexample.size)
+          assert.strictEqual(result.shrunkInput.size, 2)
+          assert.strictEqual(new Set(result.shrunkInput.keys()).size, result.shrunkInput.size)
         }
       }))
 
@@ -2087,7 +2112,12 @@ describe("Arbitrary", () => {
 
         assert.isTrue(Result.isFailure(result))
         if (Result.isFailure(result)) {
-          assert.deepStrictEqual(result.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          assert.deepStrictEqual(result.failure, {
+            _tag: "SampleError",
+            generated: 0,
+            discards: 3,
+            seed: "exhaustion"
+          })
         }
       }))
 
@@ -2180,7 +2210,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 2_000)
-          assert.strictEqual(result.counterexample, 2)
+          assert.strictEqual(result.shrunkInput, 2)
           assert.strictEqual(result.shrinks, 1)
         }
       }))
@@ -2200,7 +2230,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, "same")
-          assert.strictEqual(result.counterexample, "same")
+          assert.strictEqual(result.shrunkInput, "same")
           assert.strictEqual(result.shrinks, 1)
           assert.strictEqual(evaluations, 2)
         }
@@ -2222,9 +2252,19 @@ describe("Arbitrary", () => {
 
         assert.isTrue(Result.isFailure(sampled))
         if (Result.isFailure(sampled)) {
-          assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+          assert.deepStrictEqual(sampled.failure, {
+            _tag: "SampleError",
+            generated: 0,
+            discards: 3,
+            seed: "filter-exhaustion"
+          })
         }
-        assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+        assert.deepStrictEqual(checked, {
+          _tag: "Exhausted",
+          runs: 0,
+          discards: 3,
+          seed: "filter-exhaustion"
+        })
       }))
 
     it.effect("promotes accepted shrink descendants through filter", () =>
@@ -2238,7 +2278,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 100)
-          assert.strictEqual(result.counterexample, 26)
+          assert.strictEqual(result.shrunkInput, 26)
           assert.strictEqual(result.shrinks, 1)
         }
       }))
@@ -2270,13 +2310,13 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, "value:100")
-          assert.strictEqual(result.counterexample, "value:26")
+          assert.strictEqual(result.shrunkInput, "value:26")
           assert.strictEqual(result.shrinks, 1)
           const replayed = yield* Arbitrary.checkEffect(arbitrary, () => false, { replay: result.replay })
           assert.strictEqual(replayed._tag, "Falsified")
           if (replayed._tag === "Falsified") {
             assert.strictEqual(replayed.initialInput, result.initialInput)
-            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.strictEqual(replayed.shrunkInput, result.shrunkInput)
             assert.strictEqual(replayed.shrinks, result.shrinks)
           }
         }
@@ -2319,7 +2359,7 @@ describe("Arbitrary", () => {
           })
           if (result._tag === "Falsified") {
             failures++
-            assert.strictEqual(result.counterexample.length, 1)
+            assert.strictEqual(result.shrunkInput.length, 1)
           }
         }
         assert.isAbove(failures, 0)
@@ -2345,7 +2385,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.deepStrictEqual(result.initialInput, { source: 2, target: 15 })
-          assert.deepStrictEqual(result.counterexample, { source: 2, target: 1 })
+          assert.deepStrictEqual(result.shrunkInput, { source: 2, target: 1 })
           assert.strictEqual(result.shrinks, 1)
           assert.deepStrictEqual(sources, [2, 1])
         }
@@ -2357,17 +2397,17 @@ describe("Arbitrary", () => {
         const cases: ReadonlyArray<{
           readonly arbitrary: Arbitrary.Arbitrary<number>
           readonly property: (value: number) => boolean
-          readonly counterexample: number
+          readonly shrunkInput: number
         }> = [
           {
             arbitrary: Arbitrary.flatMap(integers, (value) => Arbitrary.schema(Schema.Literal(value))),
             property: (value) => value < 10,
-            counterexample: 10
+            shrunkInput: 10
           },
           {
             arbitrary: Arbitrary.flatMap(Arbitrary.schema(Schema.Null), () => integers),
             property: (value) => value < 10,
-            counterexample: 10
+            shrunkInput: 10
           },
           {
             arbitrary: Arbitrary.flatMap(integers, (value) =>
@@ -2375,7 +2415,7 @@ describe("Arbitrary", () => {
                 ? Arbitrary.schema(Schema.Literal(value))
                 : Arbitrary.filter(Arbitrary.schema(Schema.Literal(value)), () => false)),
             property: () => false,
-            counterexample: 26
+            shrunkInput: 26
           }
         ]
 
@@ -2388,13 +2428,13 @@ describe("Arbitrary", () => {
           assert.strictEqual(result._tag, "Falsified")
           if (result._tag !== "Falsified") continue
           assert.strictEqual(result.initialInput, 100)
-          assert.strictEqual(result.counterexample, test.counterexample)
+          assert.strictEqual(result.shrunkInput, test.shrunkInput)
 
           const replayed = yield* Arbitrary.checkEffect(test.arbitrary, test.property, { replay: result.replay })
           assert.strictEqual(replayed._tag, "Falsified")
           if (replayed._tag === "Falsified") {
             assert.strictEqual(replayed.initialInput, result.initialInput)
-            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.strictEqual(replayed.shrunkInput, result.shrunkInput)
             assert.deepStrictEqual(replayed.failure, result.failure)
             assert.strictEqual(replayed.shrinks, result.shrinks)
           }
@@ -2421,9 +2461,19 @@ describe("Arbitrary", () => {
           })
           assert.isTrue(Result.isFailure(sampled))
           if (Result.isFailure(sampled)) {
-            assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+            assert.deepStrictEqual(sampled.failure, {
+              _tag: "SampleError",
+              generated: 0,
+              discards: 3,
+              seed: "flat-map-discard"
+            })
           }
-          assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+          assert.deepStrictEqual(checked, {
+            _tag: "Exhausted",
+            runs: 0,
+            discards: 3,
+            seed: "flat-map-discard"
+          })
         }
 
         const integers = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })))
@@ -2435,7 +2485,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 10)
-          assert.strictEqual(result.counterexample, 10)
+          assert.strictEqual(result.shrunkInput, 10)
           assert.strictEqual(result.shrinks, 0)
         }
       }))
@@ -2636,6 +2686,45 @@ describe("Arbitrary", () => {
     })
   })
 
+  describe("exhaustion", () => {
+    it.effect("reports and reuses an automatically resolved seed", () =>
+      Effect.gen(function*() {
+        const seed = 123_456
+        const random = {
+          nextIntUnsafe: () => seed,
+          nextDoubleUnsafe: () => 0
+        }
+        const arbitrary = Arbitrary.filter(Arbitrary.schema(Schema.Literal("value")), () => false)
+        const sampleOptions = { count: 1, maxDiscards: 2 } as const
+        const checkOptions = { runs: 1, maxDiscards: 2 } as const
+
+        const sampled = yield* Effect.result(Arbitrary.sampleEffect(arbitrary, sampleOptions)).pipe(
+          Effect.provideService(Random.Random, random)
+        )
+        assert.isTrue(Result.isFailure(sampled))
+        if (Result.isSuccess(sampled)) return
+        assert.strictEqual(sampled.failure.seed, seed)
+        const resampled = yield* Effect.result(Arbitrary.sampleEffect(arbitrary, {
+          ...sampleOptions,
+          seed: sampled.failure.seed
+        }))
+
+        const checked = yield* Arbitrary.checkEffect(arbitrary, () => true, checkOptions).pipe(
+          Effect.provideService(Random.Random, random)
+        )
+        assert.strictEqual(checked._tag, "Exhausted")
+        if (checked._tag !== "Exhausted") return
+        assert.strictEqual(checked.seed, seed)
+        const rechecked = yield* Arbitrary.checkEffect(arbitrary, () => true, {
+          ...checkOptions,
+          seed: checked.seed
+        })
+
+        assert.deepStrictEqual(resampled, sampled)
+        assert.deepStrictEqual(rechecked, checked)
+      }))
+  })
+
   describe("checkEffect", () => {
     it.effect("isolates generation Random from property Random", () =>
       Effect.gen(function*() {
@@ -2692,7 +2781,7 @@ describe("Arbitrary", () => {
 
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
-          assert.strictEqual(result.counterexample, 10)
+          assert.strictEqual(result.shrunkInput, 10)
         }
       }))
 
@@ -2707,7 +2796,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.isTrue(result.initialInput > 100n)
-          assert.strictEqual(result.counterexample, 100n)
+          assert.strictEqual(result.shrunkInput, 100n)
         }
       }))
 
@@ -2722,7 +2811,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.strictEqual(result.initialInput, 775n)
-          assert.strictEqual(result.counterexample, 700n)
+          assert.strictEqual(result.shrunkInput, 700n)
         }
       }))
 
@@ -2742,7 +2831,7 @@ describe("Arbitrary", () => {
           assert.strictEqual(result._tag, "Falsified")
           if (result._tag === "Falsified") {
             assert.notStrictEqual(result.initialInput, target)
-            assert.strictEqual(result.counterexample, target)
+            assert.strictEqual(result.shrunkInput, target)
           }
         }
       }))
@@ -2758,7 +2847,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.isAtLeast(result.initialInput, 3)
-          assert.strictEqual(result.counterexample, 3)
+          assert.strictEqual(result.shrunkInput, 3)
         }
       }))
 
@@ -2773,7 +2862,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.isTrue(Number.isNaN(result.initialInput))
-          assert.strictEqual(result.counterexample, 0)
+          assert.strictEqual(result.shrunkInput, 0)
         }
       }))
 
@@ -2793,13 +2882,13 @@ describe("Arbitrary", () => {
         assert.strictEqual(result._tag, "Falsified")
         if (result._tag === "Falsified") {
           assert.notStrictEqual(result.initialInput, null)
-          assert.strictEqual(result.counterexample, null)
+          assert.strictEqual(result.shrunkInput, null)
 
           const replayed = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => false, { replay: result.replay })
           assert.strictEqual(replayed._tag, "Falsified")
           if (replayed._tag === "Falsified") {
             assert.deepStrictEqual(replayed.initialInput, result.initialInput)
-            assert.strictEqual(replayed.counterexample, null)
+            assert.strictEqual(replayed.shrunkInput, null)
           }
         }
       }))
@@ -2824,9 +2913,9 @@ describe("Arbitrary", () => {
         assert.strictEqual(replayed._tag, "Falsified")
         if (replayed._tag !== "Falsified") return
         assert.strictEqual(replayed.runs, 1)
-        assert.strictEqual(first.counterexample, 1)
+        assert.strictEqual(first.shrunkInput, 1)
         assert.strictEqual(replayed.initialInput, first.initialInput)
-        assert.strictEqual(replayed.counterexample, first.counterexample)
+        assert.strictEqual(replayed.shrunkInput, first.shrunkInput)
         assert.deepStrictEqual(replayed.failure, first.failure)
         assert.strictEqual(replayed.shrinks, first.shrinks)
       }))
@@ -2850,7 +2939,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    it.effect("counts rejected shrink candidates once and preserves the best counterexample", () =>
+    it.effect("counts rejected shrink candidates once and preserves the best shrunk input", () =>
       Effect.gen(function*() {
         type Make = (
           source: Arbitrary.Arbitrary<number>,
@@ -2890,7 +2979,7 @@ describe("Arbitrary", () => {
           assert.deepStrictEqual(propertyEvaluations, [8, 5], name)
           if (result._tag !== "Falsified") continue
           assert.strictEqual(result.initialInput, 8, name)
-          assert.strictEqual(result.counterexample, 5, name)
+          assert.strictEqual(result.shrunkInput, 5, name)
           assert.strictEqual(result.shrinks, 1, name)
 
           visited.length = 0
@@ -2904,7 +2993,7 @@ describe("Arbitrary", () => {
           assert.deepStrictEqual(propertyEvaluations, [8, 5], name)
           if (replayed._tag === "Falsified") {
             assert.strictEqual(replayed.initialInput, result.initialInput, name)
-            assert.strictEqual(replayed.counterexample, result.counterexample, name)
+            assert.strictEqual(replayed.shrunkInput, result.shrunkInput, name)
             assert.deepStrictEqual(replayed.failure, result.failure, name)
             assert.strictEqual(replayed.shrinks, result.shrinks, name)
           }
@@ -2938,7 +3027,7 @@ describe("Arbitrary", () => {
         assert.deepStrictEqual(outerEvaluations, [8])
         assert.deepStrictEqual(propertyEvaluations, [8])
         if (result._tag === "Falsified") {
-          assert.strictEqual(result.counterexample, 8)
+          assert.strictEqual(result.shrunkInput, 8)
           assert.strictEqual(result.shrinks, 0)
         }
       }))
@@ -2956,10 +3045,10 @@ describe("Arbitrary", () => {
         assert.strictEqual(replayed._tag, "Falsified")
         if (replayed._tag !== "Falsified") return
         assert.deepStrictEqual(first.initialInput, ["value"])
-        assert.deepStrictEqual(first.counterexample, [])
+        assert.deepStrictEqual(first.shrunkInput, [])
         assert.strictEqual(first.shrinks, 1)
         assert.deepStrictEqual(replayed.initialInput, first.initialInput)
-        assert.deepStrictEqual(replayed.counterexample, first.counterexample)
+        assert.deepStrictEqual(replayed.shrunkInput, first.shrunkInput)
         assert.strictEqual(replayed.shrinks, first.shrinks)
       }))
 

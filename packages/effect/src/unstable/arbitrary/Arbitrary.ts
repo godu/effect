@@ -111,6 +111,11 @@ export interface SampleOptions {
 /**
  * Describes sampling exhaustion before the requested number of values was generated.
  *
+ * **Details**
+ *
+ * The effective `seed` can be passed to {@link sampleEffect} to reproduce the exhausted run, including when sampling
+ * originally selected a seed from the Effect `Random` service.
+ *
  * @category errors
  * @since 4.0.0
  */
@@ -118,6 +123,7 @@ export interface SampleError {
   readonly _tag: "SampleError"
   readonly generated: number
   readonly discards: number
+  readonly seed: string | number
 }
 
 /**
@@ -149,7 +155,7 @@ export type Replay = string
  *
  * `maxShrinks` bounds the number of shrink candidates inspected after the initial failure. Candidates rejected by a
  * Schema check, `filter`, `filterMap`, or dependent generation consume the same budget even though the property is not
- * evaluated. When the budget is exhausted, checking returns the best counterexample found so far. The `shrinks` field
+ * evaluated. When the budget is exhausted, checking returns the best shrunk input found so far. The `shrinks` field
  * in a `Falsified` result counts only candidates that were accepted as smaller failures.
  *
  * Replay follows an existing shrink path instead of searching for one, so `maxShrinks` is ignored when `replay` is
@@ -209,9 +215,12 @@ export interface Passed {
 }
 
 /**
- * Reports a generated failure and its shrunk counterexample.
+ * Reports a generated failure and its shrunk input.
  *
  * **Details**
+ *
+ * `initialInput` is the generated value that first falsified the property. `shrunkInput` is the best failing value found
+ * by the bounded shrink search and may be equal to `initialInput`.
  *
  * `runs` counts main property evaluations through the falsifying evaluation. It excludes evaluations performed while
  * shrinking. A replay reports one run.
@@ -222,7 +231,7 @@ export interface Passed {
 export interface Falsified<out A, out E> {
   readonly _tag: "Falsified"
   readonly initialInput: A
-  readonly counterexample: A
+  readonly shrunkInput: A
   readonly failure: PropertyFailure<E>
   readonly runs: number
   readonly discards: number
@@ -233,6 +242,11 @@ export interface Falsified<out A, out E> {
 /**
  * Reports that bounded generation discarded too many candidates.
  *
+ * **Details**
+ *
+ * The effective `seed` can be passed to {@link checkEffect} to reproduce the exhausted run, including when checking
+ * originally selected a seed from the Effect `Random` service.
+ *
  * @category models
  * @since 4.0.0
  */
@@ -240,6 +254,7 @@ export interface Exhausted {
   readonly _tag: "Exhausted"
   readonly runs: number
   readonly discards: number
+  readonly seed: string | number
 }
 
 /**
@@ -433,7 +448,7 @@ export function sampleEffect<A>(
  * **Gotchas**
  *
  * Properties must treat generated values as immutable. The runner does not clone values before evaluation, so
- * mutation can change reported counterexamples or interfere with shrinking and replay.
+ * mutation can change reported shrunk inputs or interfere with shrinking and replay.
  *
  * A property must also produce the same outcome for the same input and initial environment. The runner may evaluate
  * it repeatedly and does not restore mutable services between evaluations. Stateful properties should acquire and

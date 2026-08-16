@@ -208,12 +208,12 @@ const program = Arbitrary.checkEffect(
 
 A property failure is data rather than a thrown assertion. Inspect the `_tag` of the returned `CheckResult`:
 
-| Result           | Meaning                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------- |
-| `Passed`         | Every requested run passed.                                                                 |
-| `Falsified`      | A property returned `false` or its Effect failed. Includes the shrunk counterexample found. |
-| `Exhausted`      | Generation exceeded `maxDiscards` before completing the requested runs.                     |
-| `ReplayMismatch` | The recorded attempt or accepted shrink path no longer reproduces a failure.                |
+| Result           | Meaning                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `Passed`         | Every requested run passed.                                                        |
+| `Falsified`      | A property returned `false` or its Effect failed. Includes the shrunk input found. |
+| `Exhausted`      | Generation exceeded `maxDiscards`; includes the effective seed for reproduction.   |
+| `ReplayMismatch` | The recorded attempt or accepted shrink path no longer reproduces a failure.       |
 
 When an Effectful property fails, `Falsified.failure` is a `PropertyError` containing the typed error. Returning
 `false` produces `ReturnedFalse`.
@@ -229,7 +229,7 @@ restore mutated services between evaluations.
 ## Replaying a Failure
 
 Every `Falsified` result contains an opaque `replay` token. The token identifies both the original generated value and
-the complete shrink path that led to the reported counterexample:
+the complete shrink path that led to the reported input:
 
 ```ts
 import { Effect, Schema } from "effect"
@@ -257,10 +257,10 @@ const program = Effect.gen(function*() {
 
 Store the token in logs or failure output when you need to reproduce a failure locally. Replay compatibility is not
 guaranteed across releases of this unstable module. For a permanent regression test, add the materialized
-counterexample as an ordinary example-based test.
+shrunk input as an ordinary example-based test.
 
 A `ReplayMismatch` is returned when the Schema, property, or implementation has changed enough that the recorded
-attempt or accepted shrink path no longer reproduces a failure. The token does not fingerprint the counterexample or
+attempt or accepted shrink path no longer reproduces a failure. The token does not fingerprint the shrunk input or
 failure value, so a different failure at the same recorded coordinates is still a successful replay.
 
 ## Sampling Options
@@ -275,7 +275,8 @@ failure value, so a different failure at the same recorded coordinates is still 
 | `seed`        | A value from Effect `Random` | String or number used to reproduce the generated sequence.   |
 
 If generation exhausts its discard budget, the Effect fails with a `SampleError` containing the number of values that
-were generated and the number of discarded attempts.
+were generated, the number of discarded attempts, and the effective seed. Passing that seed to another `sampleEffect`
+call reproduces the run even when the original call did not specify one.
 
 ## Check Options
 
@@ -438,11 +439,11 @@ Third-party arbitrary values and runner-specific option objects are not supporte
 property input needs composition beyond a Schema.
 
 `@effect/vitest` turns `Falsified`, `Exhausted`, and `ReplayMismatch` results into test failures. Falsified output
-includes the shrunk counterexample and replay token.
+includes the shrunk input and replay token.
 
 The adapter treats a property as falsified when it returns `false`, throws, or completes with any non-interruption
 Effect failure. Typed failures, assertion defects, and other defects are therefore shrunk and reported with the final
-counterexample. Effect interruption remains an interruption and is not converted into a falsification. A property that
+input. Effect interruption remains an interruption and is not converted into a falsification. A property that
 returns normally with any value other than `false`, including `void`, passes for that generated input.
 
 ## Advantages of the Native Implementation
@@ -630,15 +631,16 @@ size even when the public types remain unchanged.
 ### Runner, Replay, and Interruption
 
 - `sampleEffect` fails with typed `SampleError`. `checkEffect` returns `Passed`, `Falsified`, `Exhausted`, or
-  `ReplayMismatch`. Only exact `true` passes; `false` and typed Effect failure are shrinkable property failures. Defects
-  and interruption stay in the Effect channel.
+  `ReplayMismatch`. `SampleError` and `Exhausted` retain the effective seed so exhaustion can be reproduced. Only exact
+  `true` passes; `false` and typed Effect failure are shrinkable property failures. Defects and interruption stay in the
+  Effect channel.
 - Shrinking follows the first failing child. `maxShrinks` limits all inspected shrink candidates, including candidates
   rejected before reaching the property, while `shrinks` counts accepted failing descents. Runs exclude shrink
-  evaluations. When the budget is exhausted, the runner returns the best counterexample found so far. Generated values
+  evaluations. When the budget is exhausted, the runner returns the best shrunk input found so far. Generated values
   are neither cloned nor frozen.
 - A replay token is opaque and records the seed, attempt, effective size, and complete accepted sibling path. Replay
   reconstructs contexts instead of serializing the shrink tree and returns `ReplayMismatch` when the attempt or path
-  no longer reproduces a failure. It does not compare counterexample or failure fingerprints. Malformed tokens may
+  no longer reproduces a failure. It does not compare shrunk-input or failure fingerprints. Malformed tokens may
   defect, and compatibility is not promised across unstable releases. Replay follows the recorded path without
   repeating the shrink search, so it ignores `maxShrinks`.
 - Long synchronous attempt loops yield according to `Scheduler.MaxOpsBeforeYield`. Effectful generation, declaration
@@ -647,7 +649,7 @@ size even when the public types remain unchanged.
 
 ### Deliberate Boundaries
 
-- Seeds-to-values, distributions, and local counterexamples are implementation details. For compiler-derived and
+- Seeds-to-values, distributions, and locally shrunk inputs are implementation details. For compiler-derived and
   Link-derived generation, the guarantees are domain validity, bounded generation, deterministic replay within an
   implementation, productive recursion, and the documented shrink policies. A Schema-local `arbitrary` override is
   explicitly trusted for structural type correctness.

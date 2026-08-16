@@ -29,7 +29,7 @@ function assertPropertyPassed<A, E>(result: Arbitrary.CheckResult<A, E>): void {
     case "Falsified":
       assert.fail(
         `Property falsified after ${result.runs} run(s) and ${result.shrinks} shrink(s)\n` +
-          `Counterexample: ${inspect(result.counterexample)}\n` +
+          `Shrunk input: ${inspect(result.shrunkInput)}\n` +
           `${
             result.failure._tag === "ReturnedFalse"
               ? "Failure: returned false"
@@ -38,7 +38,10 @@ function assertPropertyPassed<A, E>(result: Arbitrary.CheckResult<A, E>): void {
           `Replay: ${result.replay}`
       )
     case "Exhausted":
-      assert.fail(`Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)`)
+      assert.fail(
+        `Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)\n` +
+          `Seed: ${inspect(result.seed)}`
+      )
     case "ReplayMismatch":
       assert.fail(`Property replay failed: ${result.reason}`)
   }
@@ -177,7 +180,7 @@ export class Asserts<S extends Schema.Constraint> {
    * **Details**
    *
    * The native Schema arbitrary generates values matching the schema's `Type`. The assertion fails with the minimized
-   * counterexample and replay token if any generated value does not round-trip.
+   * shrunk input and replay token if any generated value does not round-trip.
    *
    * **Example** (Verifying round trips)
    *

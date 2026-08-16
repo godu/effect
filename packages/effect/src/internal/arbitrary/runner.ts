@@ -390,7 +390,7 @@ export const sampleEffect = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, o
     if (attempt._tag === "Generated") {
       values.push(attempt.value)
     } else if (++discards > maxDiscards) {
-      const error: SampleError = { _tag: "SampleError", generated: values.length, discards }
+      const error: SampleError = { _tag: "SampleError", generated: values.length, discards, seed }
       return yield* Effect.fail(error)
     }
     if (++attemptsSinceYield >= maxOpsBeforeYield) {
@@ -505,7 +505,7 @@ export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
     return {
       _tag: "Falsified",
       initialInput: attempt.value,
-      counterexample: replayed.current.value,
+      shrunkInput: replayed.current.value,
       failure: replayed.failure,
       runs: 1,
       discards: 0,
@@ -529,7 +529,7 @@ export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
     const currentSize = runsTarget === 1 ? size : Math.round(runs * size / (runsTarget - 1))
     const attempt = yield* generateAttempt(self.gen, seedState, currentAttempt, currentSize, true)
     if (attempt._tag === "Discarded") {
-      if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards }
+      if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards, seed }
       if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
       continue
     }
@@ -542,7 +542,7 @@ export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
     return {
       _tag: "Falsified",
       initialInput: attempt.value,
-      counterexample: minimized.current.value,
+      shrunkInput: minimized.current.value,
       failure: minimized.failure,
       runs: runs + 1,
       discards,

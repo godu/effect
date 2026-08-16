@@ -92,7 +92,7 @@ function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string |
       return undefined
     case "Falsified":
       return `Property falsified after ${result.runs} run(s) and ${result.shrinks} shrink(s)\n` +
-        `Counterexample: ${Inspectable.toStringUnknown(result.counterexample)}\n` +
+        `Shrunk input: ${Inspectable.toStringUnknown(result.shrunkInput)}\n` +
         `${
           result.failure._tag === "ReturnedFalse"
             ? "Failure: returned false"
@@ -100,7 +100,8 @@ function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string |
         }\n` +
         `Replay: ${result.replay}`
     case "Exhausted":
-      return `Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)`
+      return `Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)\n` +
+        `Seed: ${Inspectable.toStringUnknown(result.seed)}`
     case "ReplayMismatch":
       return `Property replay failed: ${result.reason}`
   }

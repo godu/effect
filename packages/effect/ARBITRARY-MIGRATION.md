@@ -140,7 +140,7 @@ There is no conversion from a fast-check seed and path to a native replay token.
 engine, then record the new token from its `Falsified` result.
 
 Replay tokens are intended for reproducing and diagnosing a current failure. Because the module is unstable, they are
-not guaranteed to survive upgrades. Preserve important counterexamples as explicit regression tests.
+not guaranteed to survive upgrades. Preserve important failing inputs as explicit regression tests.
 
 ## Migrating Declaration Annotations
 
@@ -342,7 +342,7 @@ rather than passing it through `@effect/vitest`.
 
 Migration is not only an import rename. Review the following differences:
 
-- native generation and shrinking have different distributions and may find different counterexamples;
+- native generation and shrinking have different distributions and may find different shrunk inputs;
 - native checking returns structured results instead of using fast-check's assertion exceptions;
 - generation that cannot find enough valid samples is bounded and reports `SampleError` or `Exhausted`;
 - pure and Effectful properties share one interruptible runner;
