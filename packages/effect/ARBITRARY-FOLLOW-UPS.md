@@ -5,6 +5,7 @@ verifiable slices rather than as one combined redesign. Each slice must preserve
 
 - Schema remains the only catalog of primitive and structural generator constructors;
 - discarded roots are bounded by `maxDiscards`;
+- inspected shrink candidates, including rejected nodes, are bounded by `maxShrinks`;
 - shrinking and replay remain deterministic for supported pure callbacks;
 - recursive and mutually recursive Schemas retain their productivity guarantees;
 - `Sample`, `Pull`, the PRNG, generation budgets, and Schema compiler metadata remain private;
@@ -34,6 +35,8 @@ The following architectural decisions are settled:
 - static choice is named `Union` and receives its members as an array, matching `Schema.Union`;
 - `flatMap` shrinks the source first and the selected dependent value second; after a dependent shrink is selected, the
   source is closed rather than reopened;
+- rejected shrink nodes remain observable to the runner exactly once, so `maxShrinks` bounds descendant promotion
+  without evaluating the property for those nodes;
 - ZIO's source-reopening topology and a replayable replacement for the current one-shot `Pull` are not required.
 
 ## Prioritized implementation path
@@ -158,9 +161,9 @@ positions, tree shape, random consumption, budget, and replay coordinates. It ca
 
 - a rejected root becomes `Discarded` and counts against `maxDiscards`;
 - a rejected shrink node is omitted and its descendants are promoted;
-- hidden traversal through rejected shrink nodes does not count as a new attempt;
-- `maxShrinks` bounds property evaluations, not the number of hidden rejected nodes inspected while finding the next
-  accepted candidate;
+- hidden traversal through rejected shrink nodes does not count as a new attempt or evaluate the property;
+- every inspected shrink node consumes one unit of the shared `maxShrinks` budget, including rejected nodes;
+- nested filters propagate one `Discarded` event, so a node consumes the budget once rather than once per combinator;
 - traversal remains lazy and interruptible.
 
 The failure value `X` from `filterMap` is initially discarded. It can be retained later by structured discard
@@ -192,13 +195,19 @@ evaluated again during shrinking and replay.
 - warm scenarios for mapping, passing filtering, selective filtering, and `filterMap`;
 - focused bundle fixture, with all Schema-only and unrelated fixtures unchanged.
 
-Implementation result: runtime tests cover complete-tree mapping, bounded rejection, descendant promotion,
-transformation, replay, defects, and `Union` parity separately. Type tests cover both dual forms and refinement
-inference. In the five-round Node 24 matrix, native `map`, passing `filter`, selective `filter`, and `filterMap` measured
+Implementation result: runtime tests cover complete-tree mapping, bounded root rejection, a total shrink-candidate
+budget, descendant promotion, transformation, replay, defects, and `Union` parity separately. Type tests cover both
+dual forms and refinement inference. In the five-round Node 24 matrix, native `map`, passing `filter`, selective
+`filter`, and `filterMap` measured
 12.98, 12.96, 39.44, and 28.12 microseconds respectively, versus 65.78, 62.00, 64.15, and 72.63 microseconds for the
-equivalent fast-check v4 operations. The focused `arbitrary-combinators.ts` fixture is 33.49 KB gzip. After adding the
-standard `Pipeable` method, the existing `schema-toArbitrary.ts` fixture is 33.51 KB versus 33.48 KB at the baseline, a
-measured +0.03 KB.
+equivalent fast-check v4 operations. The later filtered-failure scenario, including rejected shrink candidates,
+measured 7.18 microseconds native versus 12.98 microseconds for fast-check v4. The focused
+`arbitrary-combinators.ts` fixture is 33.49 KB gzip. After adding the standard `Pipeable` method, the existing
+`schema-toArbitrary.ts` fixture is 33.51 KB versus 33.48 KB at the baseline, a measured +0.03 KB.
+
+Making rejected shrink nodes visible to the shared `maxShrinks` budget added 47 bytes gzip to
+`arbitrary-combinators.ts`, 39 bytes to `schema-toArbitrary.ts`, and 66 bytes to a temporary fixture that retained the
+complete `checkEffect` runner. `config.ts` remained byte-for-byte unchanged.
 
 ## P3: `Union` and seeded external generators
 
@@ -436,7 +445,7 @@ tree. The current one-shot `Pull` therefore remains sufficient.
 
 If the dependent generator for a source shrink returns `Discarded`, omit that node and promote the source sample's
 descendants. Do not retry internally. An initial source or dependent discard rejects the complete attempt and counts
-against `maxDiscards`; shrink-time discards are hidden traversal and do not count as attempts.
+against `maxDiscards`; shrink-time discards do not count as attempts but do consume `maxShrinks`.
 
 ### PRNG and budget isolation
 
@@ -477,7 +486,7 @@ optional recursion across nested `flatMap` calls.
 - source is never reevaluated below a selected dependent shrink;
 - initial source and dependent discards;
 - promotion through a discarded source-shrink dependent branch;
-- all-discard shrink frontier terminates and long promotion remains interruptible;
+- all-discard shrink frontier stops at `maxShrinks` and long promotion remains interruptible;
 - deterministic seed and replay through source, dependent, and promoted branches;
 - dependent minimum larger than the residual budget at size zero;
 - nested `flatMap` does not amplify optional size;
@@ -520,16 +529,14 @@ passes its semantic, runtime, and bundle gates.
 
 These are separate projects and must not block the prioritized path above:
 
-1. decide how to bound hidden shrink-node promotion shared by `filter`, `filterMap`, and `flatMap`: either count it in
-   `maxShrinks` or introduce a separate internal work budget, while retaining descendant promotion and interruption;
-2. add structured discard reasons and runner health diagnostics after `filterMap` creates a concrete failure payload to
+1. add structured discard reasons and runner health diagnostics after `filterMap` creates a concrete failure payload to
    preserve;
-3. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
-4. profile decoded collection and Declaration Links only if the new baseline identifies a regression;
-5. audit boundary-oriented distributions across the complete Schema catalog without attempting to imitate every
+2. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
+3. profile decoded collection and Declaration Links only if the new baseline identifies a regression;
+4. audit boundary-oriented distributions across the complete Schema catalog without attempting to imitate every
    fast-check frequency;
-6. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
-7. evaluate automatic persistence and reuse of concrete counterexamples last.
+5. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
+6. evaluate automatic persistence and reuse of concrete counterexamples last.
 
 Concrete counterexample persistence is distinct from replay-token persistence. After `map` or `flatMap`, an Arbitrary
 may no longer have a Schema or codec capable of serializing its output, while the existing opaque replay token remains

@@ -91,8 +91,8 @@ measures derivation through the first recursive sample, steady-state recursive
 sampling, fixed-length string generation to exercise constraint pushdown,
 bounded Number generation, direct Uint8Array generation, a rare residual filter, a fixed-length unique array,
 literal sampling as a runner baseline, and the public `map`, `filter`, `filterMap`, and `Union` combinators. It also
-measures dependent `flatMap` sampling, shrinking, and replay, a passing property,
-a failure that shrinks from `1000` to `1`, and replay of that failure. The
+measures a filtered failure with rejected shrink candidates, dependent `flatMap` sampling, shrinking, and replay, a
+passing property, a failure that shrinks from `1000` to `1`, and replay of that failure. The
 recursive distributions are implementation-defined, so the fixtures use
 implementation-specific size settings and validate a comparable total node
 count for the fixed seed. The bounded Number case is a throughput comparison,

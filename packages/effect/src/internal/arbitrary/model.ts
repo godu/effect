@@ -7,7 +7,7 @@ import * as Pull from "../../Pull.ts"
 export interface Sample<out A> {
   readonly _tag: "Generated"
   readonly value: A
-  readonly shrinks: Pull.Pull<Sample<A>> | undefined
+  readonly shrinks: Pull.Pull<Attempt<A>> | undefined
 }
 
 /** @internal */
@@ -141,11 +141,16 @@ export function concatPulls<A>(pulls: ReadonlyArray<Pull.Pull<A>>): Pull.Pull<A>
 }
 
 /** @internal */
-export const makeSample = <A>(value: A, shrinks?: Pull.Pull<Sample<A>>): Sample<A> => ({
+export const makeSample = <A>(value: A, shrinks?: Pull.Pull<Attempt<A>>): Sample<A> => ({
   _tag: "Generated",
   value,
   shrinks
 })
+
+/** @internal */
+export function mapAttempt<A, B>(self: Attempt<A>, f: (sample: Sample<A>) => Sample<B>): Attempt<B> {
+  return self._tag === "Discarded" ? self : f(self)
+}
 
 /** @internal */
 export function sampleFromShrink<A>(value: A, shrink: (value: A) => ReadonlyArray<A>): Sample<A> {
@@ -160,16 +165,18 @@ export function sampleFromShrink<A>(value: A, shrink: (value: A) => ReadonlyArra
 export function mapSample<A, B>(self: Sample<A>, f: (value: A) => B): Sample<B> {
   return makeSample(
     f(self.value),
-    self.shrinks === undefined ? undefined : mapPull(self.shrinks, (sample) => mapSample(sample, f))
+    self.shrinks === undefined
+      ? undefined
+      : mapPull(self.shrinks, (attempt) => mapAttempt(attempt, (sample) => mapSample(sample, f)))
   )
 }
 
 function filterMapPull<A, B>(
-  source: Pull.Pull<Sample<A>>,
+  source: Pull.Pull<Attempt<A>>,
   f: (value: A) => Computation<Option.Option<B>>
-): Pull.Pull<Sample<B>> {
-  const queue: Array<Pull.Pull<Sample<A>>> = [source]
-  const loop = (): Pull.Pull<Sample<B>> =>
+): Pull.Pull<Attempt<B>> {
+  const queue: Array<Pull.Pull<Attempt<A>>> = [source]
+  const loop = (): Pull.Pull<Attempt<B>> =>
     Effect.suspend(() => {
       const current = queue[0]
       if (current === undefined) return Cause.done()
@@ -179,25 +186,28 @@ function filterMapPull<A, B>(
           queue.shift()
           return loop()
         },
-        onSuccess: (sample) =>
-          Effect.flatMapEager(toEffect(f(sample.value)), (mapped) => {
+        onSuccess: (attempt) => {
+          if (attempt._tag === "Discarded") return Effect.succeed<Attempt<B>>(attempt)
+          const sample = attempt
+          return Effect.flatMapEager(toEffect(f(sample.value)), (mapped) => {
             if (Option.isSome(mapped)) {
-              return Effect.succeed(makeSample(
+              return Effect.succeed<Attempt<B>>(makeSample(
                 mapped.value,
                 sample.shrinks === undefined ? undefined : filterMapPull(sample.shrinks, f)
               ))
             }
             if (sample.shrinks !== undefined) queue.unshift(sample.shrinks)
-            return loop()
+            return Effect.succeed<Attempt<B>>(discarded)
           })
+        }
       })
     })
   return loop()
 }
 
-function filterPull<A>(source: Pull.Pull<Sample<A>>, predicate: (value: A) => boolean): Pull.Pull<Sample<A>> {
-  const queue: Array<Pull.Pull<Sample<A>>> = [source]
-  const loop = (): Pull.Pull<Sample<A>> =>
+function filterPull<A>(source: Pull.Pull<Attempt<A>>, predicate: (value: A) => boolean): Pull.Pull<Attempt<A>> {
+  const queue: Array<Pull.Pull<Attempt<A>>> = [source]
+  const loop = (): Pull.Pull<Attempt<A>> =>
     Effect.suspend(() => {
       const current = queue[0]
       if (current === undefined) return Cause.done()
@@ -207,15 +217,17 @@ function filterPull<A>(source: Pull.Pull<Sample<A>>, predicate: (value: A) => bo
           queue.shift()
           return loop()
         },
-        onSuccess: (sample) => {
+        onSuccess: (attempt) => {
+          if (attempt._tag === "Discarded") return Effect.succeed<Attempt<A>>(attempt)
+          const sample = attempt
           if (predicate(sample.value)) {
-            return Effect.succeed(makeSample(
+            return Effect.succeed<Attempt<A>>(makeSample(
               sample.value,
               sample.shrinks === undefined ? undefined : filterPull(sample.shrinks, predicate)
             ))
           }
           if (sample.shrinks !== undefined) queue.unshift(sample.shrinks)
-          return loop()
+          return Effect.succeed<Attempt<A>>(discarded)
         }
       })
     })
@@ -298,10 +310,7 @@ export function generateUnion<A>(members: ReadonlyArray<Generator<A>>, state: Ge
     const fallbackPull = Effect.suspend(() => {
       if (pulled) return Cause.done()
       pulled = true
-      return Effect.flatMapEager(
-        toEffectGeneration(fallback.generate({ ...state, budget: { remaining: fallback.minCost } })),
-        (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt) : Cause.done()
-      )
+      return toEffectGeneration(fallback.generate({ ...state, budget: { remaining: fallback.minCost } }))
     })
     return makeSample(
       attempt.value,

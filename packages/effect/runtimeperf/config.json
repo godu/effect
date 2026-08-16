@@ -212,6 +212,17 @@
               "size": 128
             },
             {
+              "name": "filter-check-falsify-shrink-native",
+              "export": "filterCheckFalsifyAndShrink",
+              "scenario": "arbitrary-filter-check-falsify-shrink",
+              "operation": "check-filter-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            },
+            {
               "name": "union-sample-128-native",
               "export": "unionSample128",
               "scenario": "arbitrary-union-sample-128",
@@ -442,6 +453,14 @@
               "scenario": "arbitrary-filter-map-sample-128",
               "operation": "sample-filter-map",
               "size": 128
+            },
+            {
+              "name": "filter-check-falsify-shrink-fast-check-v4",
+              "export": "filterCheckFalsifyAndShrink",
+              "scenario": "arbitrary-filter-check-falsify-shrink",
+              "operation": "check-filter-and-shrink",
+              "path": "failure",
+              "size": 1
             },
             {
               "name": "union-sample-128-fast-check-v4",

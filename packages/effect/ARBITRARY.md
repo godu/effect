@@ -286,7 +286,7 @@ were generated and the number of discarded attempts.
 | `runs`        | `100`                        | Number of successful generations and property evaluations to complete. |
 | `size`        | `10`                         | Maximum complexity budget. It grows with completed runs.               |
 | `maxDiscards` | `max(100, runs * 10)`        | Maximum rejected attempts before returning `Exhausted`.                |
-| `maxShrinks`  | `100`                        | Maximum candidate evaluations while shrinking a failure.               |
+| `maxShrinks`  | `100`                        | Maximum shrink candidates inspected after the initial failure.         |
 | `seed`        | A value from Effect `Random` | String or number used to reproduce generation.                         |
 | `replay`      | None                         | Opaque token from a previous `Falsified` result.                       |
 
@@ -454,7 +454,8 @@ catalog is needed.
   immediately when the root has no finite path, and recursive branches share one per-sample fuel budget. Callers do not
   wire a terminal generator or depth identifier manually.
 - **Bounded rejection.** Root rejection is represented as a discard and is limited by `maxDiscards`. An impossible
-  filter returns `SampleError` or `Exhausted` instead of remaining inside an unbounded generator retry loop.
+  filter returns `SampleError` or `Exhausted` instead of remaining inside an unbounded generator retry loop. During
+  shrinking, `maxShrinks` also bounds rejected-node promotion, not only property evaluations.
 - **Effect-native execution.** Sampling and checking are interruptible Effects. Properties may be pure or Effectful,
   typed failures remain data, defects remain defects, and services compose normally. The same runner powers direct
   checks, `TestSchema`, and `@effect/vitest`.
@@ -517,8 +518,10 @@ size even when the public types remain unchanged.
   mutable dependency and fixed-point metadata; ordinary Arbitrary combinators do not participate in the Schema graph.
 - One generation call returns either `Generated` or `Discarded`, synchronously when possible and as an Effect only when
   necessary. Internal combinators use the eager Effect operators so immediate results stay on the synchronous path.
-- A generated value optionally owns a lazy, one-shot `Pull` of smaller samples. The tree is not materialized eagerly,
-  and sampling with shrinking disabled does not construct shrink carriers.
+- A generated value optionally owns a lazy, one-shot `Pull` of smaller `Generated` or `Discarded` attempts. Rejected
+  nodes remain observable exactly once by the runner so `maxShrinks` can bound total traversal while their descendants
+  are still promoted. The tree is not materialized eagerly, and sampling with shrinking disabled does not construct
+  shrink carriers.
 
 ### Schema Compilation
 
@@ -600,8 +603,8 @@ size even when the public types remain unchanged.
   selected member's own shrink tree. Weighted choice is not part of the current interface.
 - `map` transforms the complete tree without consuming randomness or changing its positions, including duplicate
   mapped values. `filter` and `filterMap` turn a rejected root into `Discarded`; while shrinking they omit rejected nodes
-  and promote valid descendants. Hidden promotion work is lazy and interruptible but does not count as a property
-  evaluation.
+  and promote valid descendants. Hidden promotion work is lazy and interruptible. Each rejected node consumes one
+  unit of `maxShrinks`, but it does not evaluate the property.
 - `filterMap` discards the failure value carried by `Result`. `map` and `filter` retain specialized implementations so
   their common paths do not allocate or inspect a `Result` merely to reuse `filterMap` as a semantic primitive.
 
@@ -614,7 +617,8 @@ size even when the public types remain unchanged.
   `Pull` remains sufficient; a replayable tree or ZIO-style source reopening is unnecessary under deterministic
   callbacks.
 - An initial source or dependent discard rejects the complete attempt. When a dependent for a source shrink discards,
-  that node is hidden and the source node's descendants are promoted without an internal retry.
+  that node is hidden, consumes one unit of `maxShrinks`, and promotes the source node's descendants without an
+  internal retry.
 - Sampling, where shrinking is disabled, uses the enclosing state directly and creates no checkpoint. For checking,
   the source receives an isolated PRNG and budget state. The engine checkpoints after source generation, and the
   initial dependent plus every source-shrink dependent receives an independent clone of that checkpoint. Only the
@@ -630,12 +634,15 @@ size even when the public types remain unchanged.
 - `sampleEffect` fails with typed `SampleError`. `checkEffect` returns `Passed`, `Falsified`, `Exhausted`, or
   `ReplayMismatch`. Only exact `true` passes; `false` and typed Effect failure are shrinkable property failures. Defects
   and interruption stay in the Effect channel.
-- Shrinking follows the first failing child. `maxShrinks` limits candidate property evaluations, while `shrinks` counts
-  accepted failing descents. Runs exclude shrink evaluations. Generated values are neither cloned nor frozen.
+- Shrinking follows the first failing child. `maxShrinks` limits all inspected shrink candidates, including candidates
+  rejected before reaching the property, while `shrinks` counts accepted failing descents. Runs exclude shrink
+  evaluations. When the budget is exhausted, the runner returns the best counterexample found so far. Generated values
+  are neither cloned nor frozen.
 - A replay token is opaque and records the seed, attempt, effective size, and complete accepted sibling path. Replay
   reconstructs contexts instead of serializing the shrink tree and returns `ReplayMismatch` when the attempt or path
   no longer reproduces a failure. It does not compare counterexample or failure fingerprints. Malformed tokens may
-  defect, and compatibility is not promised across unstable releases.
+  defect, and compatibility is not promised across unstable releases. Replay follows the recorded path without
+  repeating the shrink search, so it ignores `maxShrinks`.
 - Long synchronous attempt loops yield according to `Scheduler.MaxOpsBeforeYield`. Effectful generation, declaration
   decoding, property evaluation, and lazy shrink traversal remain interruptible. Parallel property evaluation is not
   part of the current runner.

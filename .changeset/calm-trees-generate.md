@@ -11,10 +11,11 @@ The initial implementation supports bounded discards, shrinking, replay, and rec
 
 Add `Arbitrary.map`, `Arbitrary.flatMap`, `Arbitrary.filter`, `Arbitrary.filterMap`, and `Arbitrary.Union` for composing
 derived Arbitraries without exposing a second catalog of primitive constructors. Filtering remains bounded and
-promotes valid shrink descendants through rejected nodes. `flatMap` provides deterministic dependent generation,
-source-first shrinking, post-source PRNG checkpoints, and one shared residual recursion budget. `Union` uses the same
-budget, selection, and cross-branch shrinking policy as `Schema.Union`. Arbitrary values implement `Pipeable` for
-composition with data-last combinators.
+promotes valid shrink descendants through rejected nodes. `maxShrinks` bounds every inspected shrink candidate,
+including candidates rejected before property evaluation, while retaining the best counterexample found when the
+budget is exhausted. `flatMap` provides deterministic dependent generation, source-first shrinking, post-source PRNG
+checkpoints, and one shared residual recursion budget. `Union` uses the same budget, selection, and cross-branch
+shrinking policy as `Schema.Union`. Arbitrary values implement `Pipeable` for composition with data-last combinators.
 
 Add a public Schema-local `arbitrary` annotation for application-owned replacement distributions. Its factory is
 evaluated eagerly during derivation, all checks on the annotated node remain authoritative, and recursive replacement
@@ -70,6 +71,7 @@ same output domains, although their generation distributions are not identical.
 | 128 samples through passing filter  | 12.4 µs |    57.5 µs |               0.22x |
 | 32 samples through selective filter | 39.8 µs |    69.5 µs |               0.57x |
 | 128 `filterMap` samples             | 31.5 µs |    73.3 µs |               0.43x |
+| Filtered failure and shrinking      | 7.18 µs |    13.0 µs |               0.55x |
 | 128 `Union` samples                 | 9.83 µs |    51.5 µs |               0.19x |
 | 128 Schema-local `Person` samples   | 25.7 µs |    81.0 µs |               0.32x |
 | 128 dependent `flatMap` samples     | 67.8 µs |     120 µs |               0.56x |

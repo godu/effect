@@ -278,14 +278,14 @@ function makeGenerationState(
 }
 
 function flatMapSourcePull<A, B>(
-  source: Pull.Pull<Model.Sample<A>>,
+  source: Pull.Pull<Model.Attempt<A>>,
   f: (value: A) => Arbitrary<B>,
   checkpoint: Model.GenerationRandom,
   state: Model.GenerationState,
   residual: number
-): Pull.Pull<Model.Sample<B>> {
-  const queue: Array<Pull.Pull<Model.Sample<A>>> = [source]
-  const loop = (): Pull.Pull<Model.Sample<B>> =>
+): Pull.Pull<Model.Attempt<B>> {
+  const queue: Array<Pull.Pull<Model.Attempt<A>>> = [source]
+  const loop = (): Pull.Pull<Model.Attempt<B>> =>
     Effect.suspend(() => {
       const current = queue[0]
       if (current === undefined) return Cause.done()
@@ -295,15 +295,19 @@ function flatMapSourcePull<A, B>(
           queue.shift()
           return loop()
         },
-        onSuccess: (sourceSample) => {
+        onSuccess: (sourceAttempt) => {
+          if (sourceAttempt._tag === "Discarded") return Effect.succeed<Model.Attempt<B>>(sourceAttempt)
+          const sourceSample = sourceAttempt
           const target = f(sourceSample.value).gen
           const targetState = makeGenerationState(state, checkpoint.clone(), residual + target.minCost)
           return Effect.flatMapEager(Model.toEffectGeneration(target.generate(targetState)), (attempt) => {
             if (attempt._tag === "Discarded") {
               if (sourceSample.shrinks !== undefined) queue.unshift(sourceSample.shrinks)
-              return loop()
+              return Effect.succeed<Model.Attempt<B>>(Model.discarded)
             }
-            return Effect.succeed(flatMapSample(sourceSample, attempt, f, checkpoint, state, residual))
+            return Effect.succeed<Model.Attempt<B>>(
+              flatMapSample(sourceSample, attempt, f, checkpoint, state, residual)
+            )
           })
         }
       })
@@ -432,19 +436,21 @@ const shrink = Effect.fnUntraced(function*<A, E, R>(
   let current = initial
   let failure = initialFailure
   let shrinks = 0
-  let evaluations = 0
+  let inspected = 0
   const path: Array<number> = []
-  while (evaluations < maximum) {
+  while (inspected < maximum) {
     let index = 0
     let found: Model.Sample<A> | undefined
-    while (evaluations < maximum) {
+    while (inspected < maximum) {
       if (current.shrinks === undefined) break
       const candidate = yield* pullNext(current.shrinks)
       if (Option.isNone(candidate)) break
-      evaluations++
-      const outcome = yield* evaluateProperty(property, candidate.value.value)
+      inspected++
+      const attempt = candidate.value
+      if (attempt._tag === "Discarded") continue
+      const outcome = yield* evaluateProperty(property, attempt.value)
       if (outcome._tag !== "Passed") {
-        found = candidate.value
+        found = attempt
         failure = outcome
         path.push(index)
         break
@@ -469,10 +475,13 @@ const followReplay = Effect.fnUntraced(function*<A, E, R>(
   for (const targetIndex of path) {
     if (current.shrinks === undefined) return { _tag: "ReplayMismatch", reason: "ShrinkPathUnavailable" } as const
     let selected: Model.Sample<A> | undefined
-    for (let index = 0; index <= targetIndex; index++) {
+    let index = 0
+    while (index <= targetIndex) {
       const candidate = yield* pullNext(current.shrinks)
       if (Option.isNone(candidate)) return { _tag: "ReplayMismatch", reason: "ShrinkPathUnavailable" } as const
+      if (candidate.value._tag === "Discarded") continue
       if (index === targetIndex) selected = candidate.value
+      index++
     }
     const outcome = yield* evaluateProperty(property, selected!.value)
     if (outcome._tag === "Passed") return { _tag: "ReplayMismatch", reason: "ShrinkPassed" } as const

@@ -2850,6 +2850,99 @@ describe("Arbitrary", () => {
         }
       }))
 
+    it.effect("counts rejected shrink candidates once and preserves the best counterexample", () =>
+      Effect.gen(function*() {
+        type Make = (
+          source: Arbitrary.Arbitrary<number>,
+          visit: (value: number) => void
+        ) => Arbitrary.Arbitrary<number>
+        const allowed = (value: number) => value === 8 || value === 5 || value === 4
+        const cases: ReadonlyArray<readonly [name: string, make: Make]> = [
+          ["filter", (source, visit) =>
+            Arbitrary.filter(source, (value) => {
+              visit(value)
+              return allowed(value)
+            })],
+          ["filterMap", (source, visit) =>
+            Arbitrary.filterMap(source, (value) => {
+              visit(value)
+              return allowed(value) ? Result.succeed(value) : Result.fail(value)
+            })],
+          ["flatMap", (source, visit) =>
+            Arbitrary.flatMap(source, (value) => {
+              visit(value)
+              return Arbitrary.filter(Arbitrary.schema(Schema.Literal(value)), () => allowed(value))
+            })]
+        ]
+
+        for (const [name, make] of cases) {
+          const visited: Array<number> = []
+          const propertyEvaluations: Array<number> = []
+          const source = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })))
+          const arbitrary = make(source, (value) => visited.push(value))
+          const result = yield* Arbitrary.checkEffect(arbitrary, (value) => {
+            propertyEvaluations.push(value)
+            return false
+          }, { runs: 1, seed: 47, size: 10, maxShrinks: 3 })
+
+          assert.strictEqual(result._tag, "Falsified", name)
+          assert.deepStrictEqual(visited, [8, 1, 5, 3], name)
+          assert.deepStrictEqual(propertyEvaluations, [8, 5], name)
+          if (result._tag !== "Falsified") continue
+          assert.strictEqual(result.initialInput, 8, name)
+          assert.strictEqual(result.counterexample, 5, name)
+          assert.strictEqual(result.shrinks, 1, name)
+
+          visited.length = 0
+          propertyEvaluations.length = 0
+          const replayed = yield* Arbitrary.checkEffect(arbitrary, (value) => {
+            propertyEvaluations.push(value)
+            return false
+          }, { replay: result.replay, maxShrinks: 0 })
+          assert.strictEqual(replayed._tag, "Falsified", name)
+          assert.deepStrictEqual(visited, [8, 1, 5], name)
+          assert.deepStrictEqual(propertyEvaluations, [8, 5], name)
+          if (replayed._tag === "Falsified") {
+            assert.strictEqual(replayed.initialInput, result.initialInput, name)
+            assert.strictEqual(replayed.counterexample, result.counterexample, name)
+            assert.deepStrictEqual(replayed.failure, result.failure, name)
+            assert.strictEqual(replayed.shrinks, result.shrinks, name)
+          }
+        }
+      }))
+
+    it.effect("does not count a rejected candidate once per nested filter", () =>
+      Effect.gen(function*() {
+        const innerEvaluations: Array<number> = []
+        const outerEvaluations: Array<number> = []
+        const propertyEvaluations: Array<number> = []
+        const arbitrary = Arbitrary.schema(
+          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 }))
+        ).pipe(
+          Arbitrary.filter((value) => {
+            innerEvaluations.push(value)
+            return value === 8 || value === 5
+          }),
+          Arbitrary.filter((value) => {
+            outerEvaluations.push(value)
+            return true
+          })
+        )
+        const result = yield* Arbitrary.checkEffect(arbitrary, (value) => {
+          propertyEvaluations.push(value)
+          return false
+        }, { runs: 1, seed: 47, size: 10, maxShrinks: 1 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        assert.deepStrictEqual(innerEvaluations, [8, 1])
+        assert.deepStrictEqual(outerEvaluations, [8])
+        assert.deepStrictEqual(propertyEvaluations, [8])
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.counterexample, 8)
+          assert.strictEqual(result.shrinks, 0)
+        }
+      }))
+
     it.effect("lazily materializes structural shrinks and replays them", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(

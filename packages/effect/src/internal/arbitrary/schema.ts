@@ -479,7 +479,10 @@ function arraySample(
   const childPulls = children.flatMap((child, index) =>
     child.shrinks === undefined
       ? []
-      : [Model.mapPull(child.shrinks, (sample) => arraySample(replaceAt(children, index, sample), shape))]
+      : [Model.mapPull(
+        child.shrinks,
+        (attempt) => Model.mapAttempt(attempt, (sample) => arraySample(replaceAt(children, index, sample), shape))
+      )]
   )
   const structural: Array<() => Model.Sample<ReadonlyArray<any>>> = []
   if (shape.repeatCount > 0 && children.length - 1 >= shape.minimum) {
@@ -548,7 +551,11 @@ function objectSample(
       : [
         Model.mapPull(
           entry.sample.shrinks,
-          (sample) => objectSample(replaceAt(entries, index, { ...entry, sample }), minimum)
+          (attempt) =>
+            Model.mapAttempt(
+              attempt,
+              (sample) => objectSample(replaceAt(entries, index, { ...entry, sample }), minimum)
+            )
         )
       ]
   )
@@ -564,10 +571,14 @@ function objectSample(
     if (Option.isNone(filtered) || filtered.value.shrinks === undefined) return []
     return [Model.mapPull(
       filtered.value.shrinks,
-      (keySample) =>
-        objectSample(
-          replaceAt(entries, index, { ...entry, key: keySample.value, keySample }),
-          minimum
+      (attempt) =>
+        Model.mapAttempt(
+          attempt,
+          (keySample) =>
+            objectSample(
+              replaceAt(entries, index, { ...entry, key: keySample.value, keySample }),
+              minimum
+            )
         )
     )]
   })

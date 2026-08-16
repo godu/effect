@@ -147,8 +147,13 @@ export type Replay = string
  * Unconstrained strings, arrays, and object properties use the current budget without an additional internal ceiling;
  * explicit Schema bounds and required members still apply.
  *
- * `maxShrinks` bounds the number of candidate property evaluations performed while shrinking. The `shrinks` field in
- * a `Falsified` result counts only candidates that were accepted as smaller failures.
+ * `maxShrinks` bounds the number of shrink candidates inspected after the initial failure. Candidates rejected by a
+ * Schema check, `filter`, `filterMap`, or dependent generation consume the same budget even though the property is not
+ * evaluated. When the budget is exhausted, checking returns the best counterexample found so far. The `shrinks` field
+ * in a `Falsified` result counts only candidates that were accepted as smaller failures.
+ *
+ * Replay follows an existing shrink path instead of searching for one, so `maxShrinks` is ignored when `replay` is
+ * present.
  *
  * @category models
  * @since 4.0.0

@@ -226,6 +226,29 @@ export const filterMapSample128 = () => {
   }
 }
 
+export const filterCheckFalsifyAndShrink = () => {
+  const arbitrary = Arbitrary.filter(
+    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 }))),
+    (value) => value === 8 || value === 5 || value === 4
+  )
+  const program = Arbitrary.checkEffect(arbitrary, () => false, {
+    runs: 1,
+    seed: 47,
+    size,
+    maxShrinks: 100
+  })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (result: Arbitrary.CheckResult<number, never>) => {
+      assert.equal(result._tag, "Falsified")
+      if (result._tag !== "Falsified") return
+      assert.equal(result.initialInput, 8)
+      assert.equal(result.counterexample, 4)
+      assert.equal(result.shrinks, 2)
+    }
+  }
+}
+
 export const unionSample128 = () => {
   const arbitrary = Arbitrary.Union([
     Arbitrary.schema(Schema.Literal("left")),

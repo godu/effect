@@ -244,6 +244,21 @@ export const filterMapSample128 = () => {
   }
 }
 
+export const filterCheckFalsifyAndShrink = () => {
+  const arbitrary = FastCheck.integer({ min: 1, max: 8 }).filter(
+    (value) => value === 8 || value === 5 || value === 4
+  )
+  const property = FastCheck.property(arbitrary, () => false)
+  return {
+    run: () => FastCheck.check(property, { examples: [[8]], numRuns: 1, seed }),
+    validate: (result: FastCheck.RunDetails<[number]>) => {
+      assert.equal(result.failed, true)
+      assert.deepEqual(result.counterexample, [4])
+      assert.equal(result.numShrinks, 2)
+    }
+  }
+}
+
 export const unionSample128 = () => {
   const arbitrary = FastCheck.oneof(FastCheck.constant("left"), FastCheck.constant(1))
   return {
