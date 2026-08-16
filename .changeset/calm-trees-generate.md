@@ -7,6 +7,7 @@ Add the experimental Schema-first `effect/unstable/arbitrary/Arbitrary` module f
 fast-check. `Arbitrary.schema` derives an opaque arbitrary from the decoded Schema `Type`, `Arbitrary.sampleEffect`
 provides interruptible sampling with typed exhaustion, and `Arbitrary.checkEffect` returns structured property results.
 The initial implementation supports bounded discards, shrinking, replay, and recursive and mutually recursive Schemas.
+`Arbitrary.isArbitrary` identifies values through the module's nominal protocol.
 
 Add `Arbitrary.map`, `Arbitrary.filter`, `Arbitrary.filterMap`, and `Arbitrary.Union` for composing derived Arbitraries
 without exposing a second catalog of primitive constructors. Filtering remains bounded and promotes valid shrink
@@ -34,8 +35,9 @@ Migrate `TestSchema.Asserts.verifyLosslessTransformation` and `TestSchema.Assert
 native runner. Both methods now accept native check options directly, bound unsuccessful generation, and include the
 minimized counterexample and replay token in property failures.
 
-Use the native runner for all `@effect/vitest` property tests. Property inputs are now Schemas, and native check options
-are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are no longer supported.
+Use the Arbitrary runner for all `@effect/vitest` property tests. Property inputs may combine Schemas and Arbitraries,
+and check options are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are
+no longer supported.
 
 Optimize `BigDecimal.Order` and `BigDecimal.Equivalence` with a shared hybrid comparator. Ordinary scale differences
 use cached, bounded coefficient alignment, while large differences are compared without materializing their decimal

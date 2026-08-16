@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
-import * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import * as V from "vitest"
 import type * as Vitest from "../index.ts"
 
@@ -56,28 +56,33 @@ const hookTimeout = (timeout?: Duration.Input) =>
 type PropertyTimeout =
   | number
   | V.TestOptions & {
-    readonly arbitrary?: NativeArbitrary.CheckOptions | undefined
+    readonly arbitrary?: Arbitrary.CheckOptions | undefined
   }
 
-type Arbitraries =
-  | Array<Schema.Schema<any>>
-  | { [K in string]: Schema.Schema<any> }
+type ArbitraryInput = Schema.Schema<any> | Arbitrary.Arbitrary<unknown>
+
+type Arbitraries = Array<ArbitraryInput> | { [K in string]: ArbitraryInput }
 
 const propertyTestOptions = (
   timeout: PropertyTimeout | undefined
 ): Exclude<PropertyTimeout, number> | undefined => typeof timeout === "number" ? undefined : timeout
 
-const nativeCheckOptions = (timeout: PropertyTimeout | undefined): NativeArbitrary.CheckOptions | undefined =>
+const checkOptions = (timeout: PropertyTimeout | undefined): Arbitrary.CheckOptions | undefined =>
   propertyTestOptions(timeout)?.arbitrary
 
-const makeNativeArbitrary = (arbitraries: Arbitraries): NativeArbitrary.Arbitrary<any> =>
-  NativeArbitrary.schema(
+const arbitraryInputToSchema = (input: ArbitraryInput): Schema.Schema<any> =>
+  Arbitrary.isArbitrary(input) ? Schema.Unknown.annotate({ arbitrary: () => input }) : input
+
+const makeArbitrary = (arbitraries: Arbitraries): Arbitrary.Arbitrary<any> =>
+  Arbitrary.schema(
     Array.isArray(arbitraries)
-      ? Schema.Tuple(arbitraries)
-      : Schema.Struct(arbitraries)
+      ? Schema.Tuple(arbitraries.map(arbitraryInputToSchema))
+      : Schema.Struct(Object.fromEntries(
+        Object.entries(arbitraries).map(([key, input]) => [key, arbitraryInputToSchema(input)])
+      ))
   )
 
-function formatNativeCheckFailure<A, E>(result: NativeArbitrary.CheckResult<A, E>): string | undefined {
+function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string | undefined {
   switch (result._tag) {
     case "Passed":
       return undefined
@@ -97,15 +102,15 @@ function formatNativeCheckFailure<A, E>(result: NativeArbitrary.CheckResult<A, E
   }
 }
 
-const runNativeCheck = <A, E>(
+const runCheck = <A, E>(
   ctx: V.TestContext,
-  arbitrary: NativeArbitrary.Arbitrary<A>,
+  arbitrary: Arbitrary.Arbitrary<A>,
   property: (value: A) => boolean | Effect.Effect<boolean, E>,
-  options: NativeArbitrary.CheckOptions | undefined
+  options: Arbitrary.CheckOptions | undefined
 ): Promise<void> =>
   runTest(ctx)(
-    Effect.flatMapEager(NativeArbitrary.checkEffect(arbitrary, property, options), (result) => {
-      const failure = formatNativeCheckFailure(result)
+    Effect.flatMapEager(Arbitrary.checkEffect(arbitrary, property, options), (result) => {
+      const failure = formatCheckFailure(result)
       return failure === undefined ? Effect.void : Effect.die(new Error(failure))
     })
   )
@@ -182,12 +187,12 @@ const makeTester = <R>(
     V.it.fails(name, testOptions(timeout), (ctx) => run(ctx, [ctx], self))
 
   const prop: Vitest.Vitest.Tester<R>["prop"] = (name, arbitraries, self, timeout) => {
-    const arbitrary = makeNativeArbitrary(arbitraries)
+    const arbitrary = makeArbitrary(arbitraries)
     return it(
       name,
       testOptions(timeout),
       (ctx) =>
-        runNativeCheck(
+        runCheck(
           ctx,
           arbitrary,
           (values) =>
@@ -195,7 +200,7 @@ const makeTester = <R>(
               mapEffect(Effect.suspend(() => self(values as any, ctx))),
               (value) => (value as unknown) !== false
             ),
-          nativeCheckOptions(timeout)
+          checkOptions(timeout)
         )
     )
   }
@@ -205,16 +210,16 @@ const makeTester = <R>(
 
 /** @internal */
 export const prop: Vitest.Vitest.Methods["prop"] = (name, arbitraries, self, timeout) => {
-  const arbitrary = makeNativeArbitrary(arbitraries)
+  const arbitrary = makeArbitrary(arbitraries)
   return V.it(
     name,
     testOptions(timeout),
     (ctx) =>
-      runNativeCheck(
+      runCheck(
         ctx,
         arbitrary,
         (values) => (self(values as any, ctx) as unknown) !== false,
-        nativeCheckOptions(timeout)
+        checkOptions(timeout)
       )
   )
 }

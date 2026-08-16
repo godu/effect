@@ -436,7 +436,7 @@ interface BigIntRange {
 }
 
 // The numeric edge ranges and their 2:1 preference for the edge closest to zero follow fast-check v4.9.0's
-// BiasNumericRange, IntegerArbitrary, and BigIntArbitrary (MIT). The policy stays private to the native engine.
+// BiasNumericRange, IntegerArbitrary, and BigIntArbitrary (MIT). The policy stays private to the Arbitrary engine.
 // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/helpers/BiasNumericRange.ts
 // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/IntegerArbitrary.ts
 // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/BigIntArbitrary.ts

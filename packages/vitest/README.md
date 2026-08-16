@@ -30,7 +30,7 @@ This import enhances the standard `it` function from `vitest` with several power
 | `it.effect`    | Runs a scoped test with test services such as `TestClock` and `TestConsole`.                        |
 | `it.live`      | Runs a scoped test with the live Effect environment.                                                |
 | `it.layer`     | Shares a `Layer` between multiple tests.                                                            |
-| `it.prop`      | Runs property tests using Effect `Schema` values.                                                   |
+| `it.prop`      | Runs property tests using Effect `Schema` and `Arbitrary` values.                                   |
 | `it.flakyTest` | Retries an Effect that might occasionally fail until it succeeds or reaches the configured timeout. |
 
 ## Writing Tests with `it.effect`

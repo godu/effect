@@ -854,7 +854,7 @@ function shrinkString(value: string, minimum: number): ReadonlyArray<string> {
       value.slice(0, Math.max(minimum, Math.floor(value.length / 2))),
       value.slice(0, -1)
     ]
-  // fast-check v4.9.0 builds strings from shrinkable units (MIT). Effect keeps UTF-16 code units as the native domain
+  // fast-check v4.9.0 builds strings from shrinkable units (MIT). Effect keeps UTF-16 code units as its string domain
   // and applies its integer-halving shrink toward the Effect-owned null-unit target.
   // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/string.ts
   for (let index = 0; index < value.length; index++) {
@@ -1047,7 +1047,7 @@ function numberSample(
 ): Model.Sample<number> {
   if (!integer) {
     // fast-check v4.9.0's double arbitrary shrinks the monotone IEEE-754 index through its BigInt arbitrary (MIT).
-    // The native sample keeps the equivalent last-passing index context without exposing either representation.
+    // The sample keeps the equivalent last-passing index context without exposing either representation.
     // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/double.ts
     let candidates: ReadonlyArray<NumberShrink>
     const target = numberTarget(minimum, maximum)

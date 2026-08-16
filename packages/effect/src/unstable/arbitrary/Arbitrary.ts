@@ -9,7 +9,7 @@ import { dual } from "../../Function.ts"
 import type * as Model from "../../internal/arbitrary/model.ts"
 import * as Internal from "../../internal/arbitrary/runner.ts"
 import type { Pipeable } from "../../Pipeable.ts"
-import type { Predicate, Refinement } from "../../Predicate.ts"
+import { hasProperty, type Predicate, type Refinement } from "../../Predicate.ts"
 import type * as Schema_ from "../../Schema.ts"
 import type * as Types from "../../Types.ts"
 
@@ -41,7 +41,7 @@ declare module "../../Schema.ts" {
 }
 
 /**
- * Runtime type identifier for native `Arbitrary` values.
+ * Runtime type identifier for `Arbitrary` values.
  *
  * @category type IDs
  * @since 4.0.0
@@ -49,7 +49,7 @@ declare module "../../Schema.ts" {
 export const TypeId: TypeId = Internal.TypeId
 
 /**
- * Type of the runtime identifier for native `Arbitrary` values.
+ * Type of the runtime identifier for `Arbitrary` values.
  *
  * @category type IDs
  * @since 4.0.0
@@ -76,6 +76,18 @@ export interface Arbitrary<out A> extends Pipeable {
   /** @internal */
   readonly gen: Model.Generator<A>
 }
+
+/**
+ * Checks whether a value is an `Arbitrary`.
+ *
+ * **When to use**
+ *
+ * Use when accepting both Arbitrary values and other input descriptions.
+ *
+ * @category guards
+ * @since 4.0.0
+ */
+export const isArbitrary = (u: unknown): u is Arbitrary<unknown> => hasProperty(u, TypeId)
 
 /**
  * Configures direct sampling from an `Arbitrary`.
@@ -249,7 +261,7 @@ export interface ReplayMismatch {
 export type CheckResult<A, E> = Passed | Falsified<A, E> | Exhausted | ReplayMismatch
 
 /**
- * Derives a native `Arbitrary` from the decoded `Type` of a Schema.
+ * Derives an `Arbitrary` from the decoded `Type` of a Schema.
  *
  * **When to use**
  *

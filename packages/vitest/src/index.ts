@@ -6,7 +6,7 @@ import type * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
 import type * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
-import type * as NativeArbitrary from "effect/unstable/arbitrary/Arbitrary"
+import type * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import * as V from "vitest"
 import * as internal from "./internal/internal.ts"
 
@@ -46,8 +46,12 @@ export namespace Vitest {
    * @since 4.0.0
    */
   export type Arbitraries =
-    | Array<Schema.Schema<any>>
-    | { [K in string]: Schema.Schema<any> }
+    | Array<Schema.Schema<any> | Arbitrary.Arbitrary<any>>
+    | { [K in string]: Schema.Schema<any> | Arbitrary.Arbitrary<any> }
+
+  type ArbitraryValue<A> = A extends Schema.Schema<infer T> ? T
+    : A extends Arbitrary.Arbitrary<infer T> ? T
+    : never
 
   /**
    * @since 4.0.0
@@ -74,7 +78,7 @@ export namespace Vitest {
         R,
         [
           {
-            [K in keyof Arbs]: Arbs[K] extends Schema.Schema<infer T> ? T : never
+            [K in keyof Arbs]: ArbitraryValue<Arbs[K]>
           },
           V.TestContext
         ]
@@ -82,7 +86,7 @@ export namespace Vitest {
       timeout?:
         | number
         | V.TestOptions & {
-          arbitrary?: NativeArbitrary.CheckOptions
+          arbitrary?: Arbitrary.CheckOptions
         }
     ) => void
   }
@@ -114,14 +118,14 @@ export namespace Vitest {
       arbitraries: Arbs,
       self: (
         properties: {
-          [K in keyof Arbs]: Arbs[K] extends Schema.Schema<infer T> ? T : never
+          [K in keyof Arbs]: ArbitraryValue<Arbs[K]>
         },
         ctx: V.TestContext
       ) => void,
       timeout?:
         | number
         | V.TestOptions & {
-          arbitrary?: NativeArbitrary.CheckOptions
+          arbitrary?: Arbitrary.CheckOptions
         }
     ) => void
   }

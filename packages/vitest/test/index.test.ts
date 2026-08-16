@@ -2,6 +2,7 @@ import { afterAll, assert, describe, expect, it, layer } from "@effect/vitest"
 import * as testAssert from "@effect/vitest/utils"
 import { Clock, Context, Duration, Effect, Fiber, Layer, Schema } from "effect"
 import { TestClock } from "effect/testing"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 it.effect(
   "effect",
@@ -171,7 +172,7 @@ describe("layer", () => {
       )
 
       it.effect.prop(
-        "adds context with a native Schema property",
+        "adds context with a Schema property",
         [Schema.Int],
         ([value]) =>
           Effect.gen(function*() {
@@ -179,7 +180,7 @@ describe("layer", () => {
             assert.strictEqual(foo, "foo")
             assert.isTrue(Number.isInteger(value))
           }),
-        { arbitrary: { runs: 5, seed: "vitest-native-layer" } }
+        { arbitrary: { runs: 5, seed: "vitest-arbitrary-layer" } }
       )
     })
   })
@@ -222,6 +223,7 @@ describe("layer", () => {
 // property testing
 
 const realNumber = Schema.Finite
+const textArbitrary = Arbitrary.schema(Schema.Literals(["a", "b"]))
 
 it.prop(
   "schema with array",
@@ -233,6 +235,36 @@ it.prop(
   "schema with object",
   { text: Schema.String, count: Schema.Int },
   ({ text, count }) => typeof text === "string" && Number.isInteger(count)
+)
+
+let mixedTupleRuns = 0
+let mixedRecordRuns = 0
+afterAll(() => {
+  assert.strictEqual(mixedTupleRuns, 5)
+  assert.strictEqual(mixedRecordRuns, 5)
+})
+
+it.prop(
+  "Schema and Arbitrary with array",
+  [Schema.Int, textArbitrary],
+  ([count, text]) => {
+    mixedTupleRuns++
+    assert.isTrue(Number.isInteger(count))
+    assert.include(["a", "b"], text)
+  },
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-mixed-tuple" } }
+)
+
+it.effect.prop(
+  "Schema and Arbitrary with object",
+  { count: Schema.Int, text: textArbitrary },
+  ({ count, text }) =>
+    Effect.sync(() => {
+      mixedRecordRuns++
+      assert.isTrue(Number.isInteger(count))
+      assert.include(["a", "b"], text)
+    }),
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-mixed-record" } }
 )
 
 it.prop("symmetry", [realNumber, Schema.Int], ([a, b]) => a + b === b + a)
@@ -249,19 +281,19 @@ it.live.prop(
   ({ value }) => Effect.sync(() => assert.isTrue(Number.isInteger(value)))
 )
 
-let nativeEffectRuns = 0
-afterAll(() => assert.strictEqual(nativeEffectRuns, 5))
+let arbitraryEffectRuns = 0
+afterAll(() => assert.strictEqual(arbitraryEffectRuns, 5))
 
 it.effect.prop(
-  "schema with native options",
+  "schema with Arbitrary options",
   [Schema.String, Schema.Int],
   ([text, count]) =>
     Effect.sync(() => {
-      nativeEffectRuns++
+      arbitraryEffectRuns++
       assert.strictEqual(typeof text, "string")
       assert.isTrue(Number.isInteger(count))
     }),
-  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-native" } }
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-arbitrary" } }
 )
 
 it.effect.prop("symmetry", [realNumber, Schema.Int], ([a, b]) =>

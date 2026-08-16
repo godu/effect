@@ -292,7 +292,7 @@ declaration that needs a reusable statistically better source domain, express th
 
 ## Migrating `@effect/vitest`
 
-Property inputs are now always Schemas.
+Property inputs may be Schemas, native Arbitraries, or mixtures of both.
 
 Schema-only properties need only an option rename:
 
@@ -322,9 +322,19 @@ it.prop("raw arbitrary", [fc.integer()], ([value]) => Number.isInteger(value))
 it.prop("mixed", [Schema.String, fc.integer()], ([text, value]) => true)
 ```
 
-Replace those inputs with Schemas when they describe a domain supported by Schema. If a test genuinely needs a
-fast-check-specific arbitrary or runner feature, use fast-check directly with Vitest rather than passing it through
-`@effect/vitest`.
+Replace those inputs with Schemas when they describe a domain supported by Schema, or compose a native Arbitrary:
+
+```ts
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const integer = Arbitrary.schema(Schema.Int)
+
+it.prop("native arbitrary", [integer], ([value]) => Number.isInteger(value))
+it.prop("mixed", [Schema.String, integer], ([text, value]) => typeof text === "string" && Number.isInteger(value))
+```
+
+If a test genuinely needs a fast-check-specific arbitrary or runner feature, use fast-check directly with Vitest
+rather than passing it through `@effect/vitest`.
 
 `it.prop`, `it.effect.prop`, and `it.live.prop` all accept native check options under `arbitrary`.
 
@@ -350,7 +360,7 @@ Migration is not only an import rename. Review the following differences:
 4. Replace `FastCheck.check` or `FastCheck.assert` for Schema-derived inputs with `Arbitrary.checkEffect`, then handle its
    structured result.
 5. Rename `@effect/vitest` options from `fastCheck` to `arbitrary` and convert `numRuns` to `runs`.
-6. Replace raw or mixed `@effect/vitest` property inputs with Schemas.
+6. Replace raw fast-check inputs in `@effect/vitest` with Schemas or native Arbitraries.
 7. Remove old `toArbitrary` and filter-level `arbitrary` annotations. Add `toCodecArbitrary` where canonical codecs do
    not provide a suitable generation representation, or use the new Schema-local `arbitrary` factory for a complete
    application-owned replacement distribution.

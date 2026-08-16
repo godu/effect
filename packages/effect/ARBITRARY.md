@@ -374,11 +374,14 @@ arbitrary builder to application code.
 
 ## Using `@effect/vitest`
 
-`@effect/vitest` derives the native arbitrary directly from tuple or struct collections of Schemas:
+`@effect/vitest` accepts tuple or struct collections containing Schemas, Arbitraries, or both:
 
 ```ts
 import { assert, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const Name = Arbitrary.schema(Schema.Literals(["Ada", "Grace"]))
 
 it.prop(
   "integer addition is commutative",
@@ -389,14 +392,18 @@ it.prop(
 
 it.effect.prop(
   "generated values can be checked in an Effect",
-  { value: Schema.Int },
-  ({ value }) => Effect.sync(() => assert.isTrue(Number.isInteger(value))),
+  { name: Name, value: Schema.Int },
+  ({ name, value }) =>
+    Effect.sync(() => {
+      assert.include(["Ada", "Grace"], name)
+      assert.isTrue(Number.isInteger(value))
+    }),
   { arbitrary: { runs: 50 } }
 )
 ```
 
-Property inputs are Schemas. Raw fast-check arbitraries, mixed Schema and fast-check inputs, and the `fastCheck`
-options object are not supported.
+Raw fast-check arbitraries and the `fastCheck` options object are not supported. Use Arbitraries when a property input
+needs composition beyond a Schema.
 
 `@effect/vitest` turns `Falsified`, `Exhausted`, and `ReplayMismatch` results into test failures. Falsified output
 includes the minimized counterexample and replay token.

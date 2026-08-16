@@ -50,6 +50,14 @@ const verifySchemaCatalog = Effect.fnUntraced(function*(entries: ReadonlyArray<S
 })
 
 describe("Arbitrary", () => {
+  describe("isArbitrary", () => {
+    it("identifies Arbitrary values", () => {
+      assert.isTrue(Arbitrary.isArbitrary(Arbitrary.schema(Schema.String)))
+      assert.isFalse(Arbitrary.isArbitrary(Schema.String))
+      assert.isFalse(Arbitrary.isArbitrary(null))
+    })
+  })
+
   describe("schema", () => {
     it.effect("generates deterministic samples and pushes constraints into primitive constructors", () =>
       Effect.gen(function*() {
@@ -631,7 +639,7 @@ describe("Arbitrary", () => {
         if (result._tag === "Falsified") assert.strictEqual(result.counterexample.epochMilliseconds, 0)
       }))
 
-    it.effect("generates and shrinks Uint8Array declarations through native Array semantics", () =>
+    it.effect("generates and shrinks Uint8Array declarations through Array semantics", () =>
       Effect.gen(function*() {
         const schema = Schema.Uint8Array.check(Schema.isMinLength(2), Schema.isMaxLength(10))
         const arbitrary = Arbitrary.schema(schema)
@@ -1376,7 +1384,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    it.effect("uses the private native annotation for Json", () =>
+    it.effect("uses the private arbitrary annotation for Json", () =>
       Effect.gen(function*() {
         const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Json), {
           count: 30,
@@ -1429,7 +1437,7 @@ describe("Arbitrary", () => {
         assert.isTrue(values.every((value) => value > 1 && value <= 4))
       }))
 
-    it("rejects contradictory native constraints before invoking toCodecArbitrary", () => {
+    it("rejects contradictory generation constraints before invoking toCodecArbitrary", () => {
       let invoked = false
       const declaration = Schema.declare<number>((input): input is number => typeof input === "number", {
         toCodecArbitrary: () => {
@@ -1644,7 +1652,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    describe("native Schema catalog", () => {
+    describe("Schema catalog", () => {
       it.effect("derives primitive and structural schemas", () => {
         const enumValues = {
           Apple: "apple",

@@ -5,6 +5,10 @@ import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { describe, expect, it } from "tstyche"
 
 describe("Arbitrary", () => {
+  it("identifies Arbitrary values", () => {
+    expect(Arbitrary.isArbitrary).type.toBe<(u: unknown) => u is Arbitrary.Arbitrary<unknown>>()
+  })
+
   it("schema preserves the decoded type", () => {
     const schema = Schema.Struct({ value: Schema.String })
     type A = typeof schema.Type
