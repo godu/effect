@@ -51,36 +51,37 @@ Before its removal, the materialized fast-check bridge fixture
 
 Representative five-round runtime measurements against corresponding hand-written fast-check 4.9.0 arbitraries are
 shown below. Values are median latency on Node 24.12.0 and Apple M3; lower is better. Both implementations validate the
-same output domains, although their generation distributions are not identical.
+same output domains, although their generation distributions are not identical. Native speedup is fast-check latency
+divided by Native latency, so higher is better.
 
-| Scenario                            |  Native | fast-check | Native / fast-check |
-| ----------------------------------- | ------: | ---------: | ------------------: |
-| 32 recursive samples                |  112 µs |     143 µs |               0.78x |
-| 128 constrained strings             | 48.8 µs |     700 µs |               0.07x |
-| 128 bounded numbers                 | 20.7 µs |    68.0 µs |               0.30x |
-| 128 `Uint8Array` samples            | 81.1 µs |     103 µs |               0.79x |
-| 128 `BigDecimal` samples            | 63.3 µs |    67.1 µs |               0.94x |
-| 128 `DateTime.Utc` samples          | 53.8 µs |    71.8 µs |               0.75x |
-| 128 named time zones                | 26.2 µs |    51.5 µs |               0.51x |
-| 128 time zones                      | 31.7 µs |    63.0 µs |               0.50x |
-| 128 zoned date-times                |  116 µs |     129 µs |               0.90x |
-| 32 samples through Schema filter    | 45.0 µs |    63.9 µs |               0.70x |
-| 32 unique arrays                    |  123 µs |     149 µs |               0.82x |
-| 128 literal samples                 | 3.68 µs |    39.6 µs |               0.09x |
-| 128 mapped samples                  | 12.8 µs |    58.1 µs |               0.22x |
-| 128 samples through passing filter  | 12.4 µs |    57.5 µs |               0.22x |
-| 32 samples through selective filter | 39.8 µs |    69.5 µs |               0.57x |
-| 128 `filterMap` samples             | 31.5 µs |    73.3 µs |               0.43x |
-| Filtered failure and shrinking      | 7.18 µs |    13.0 µs |               0.55x |
-| 128 `Union` samples                 | 9.83 µs |    51.5 µs |               0.19x |
-| 128 Schema-local `Person` samples   | 25.7 µs |    81.0 µs |               0.32x |
-| 128 dependent `flatMap` samples     | 67.8 µs |     120 µs |               0.56x |
-| `flatMap` failure and shrinking     | 5.93 µs |    19.4 µs |               0.31x |
-| Replay `flatMap` shrink path        | 5.82 µs |    12.8 µs |               0.46x |
-| Passing property, 100 runs          | 27.3 µs |    43.0 µs |               0.64x |
-| `TestSchema`, 100 generations       | 35.0 µs |    49.6 µs |               0.70x |
-| First failure plus one shrink       | 1.28 µs |    9.28 µs |               0.14x |
-| Replay recorded failure             | 1.22 µs |    6.82 µs |               0.18x |
+| Scenario                            | fast-check |  Native | Native speedup |
+| ----------------------------------- | ---------: | ------: | -------------: |
+| 32 recursive samples                |     143 µs |  112 µs |          1.28x |
+| 128 constrained strings             |     700 µs | 48.8 µs |         14.34x |
+| 128 bounded numbers                 |    68.0 µs | 20.7 µs |          3.29x |
+| 128 `Uint8Array` samples            |     103 µs | 81.1 µs |          1.27x |
+| 128 `BigDecimal` samples            |    67.1 µs | 63.3 µs |          1.06x |
+| 128 `DateTime.Utc` samples          |    71.8 µs | 53.8 µs |          1.33x |
+| 128 named time zones                |    51.5 µs | 26.2 µs |          1.97x |
+| 128 time zones                      |    63.0 µs | 31.7 µs |          1.99x |
+| 128 zoned date-times                |     129 µs |  116 µs |          1.11x |
+| 32 samples through Schema filter    |    63.9 µs | 45.0 µs |          1.42x |
+| 32 unique arrays                    |     149 µs |  123 µs |          1.21x |
+| 128 literal samples                 |    39.6 µs | 3.68 µs |         10.76x |
+| 128 mapped samples                  |    58.1 µs | 12.8 µs |          4.54x |
+| 128 samples through passing filter  |    57.5 µs | 12.4 µs |          4.64x |
+| 32 samples through selective filter |    69.5 µs | 39.8 µs |          1.75x |
+| 128 `filterMap` samples             |    73.3 µs | 31.5 µs |          2.33x |
+| Filtered failure and shrinking      |    13.0 µs | 7.18 µs |          1.81x |
+| 128 `Union` samples                 |    51.5 µs | 9.83 µs |          5.24x |
+| 128 Schema-local `Person` samples   |    81.0 µs | 25.7 µs |          3.15x |
+| 128 dependent `flatMap` samples     |     120 µs | 67.8 µs |          1.77x |
+| `flatMap` failure and shrinking     |    19.4 µs | 5.93 µs |          3.27x |
+| Replay `flatMap` shrink path        |    12.8 µs | 5.82 µs |          2.20x |
+| Passing property, 100 runs          |    43.0 µs | 27.3 µs |          1.58x |
+| `TestSchema`, 100 generations       |    49.6 µs | 35.0 µs |          1.42x |
+| First failure plus one shrink       |    9.28 µs | 1.28 µs |          7.25x |
+| Replay recorded failure             |    6.82 µs | 1.22 µs |          5.59x |
 
 Cold recursive derivation is not included because the native fixture constructs and compiles a Schema, while the
 fast-check fixture constructs a hand-written arbitrary; it is not a like-for-like warm-generator comparison.
