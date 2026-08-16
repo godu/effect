@@ -6521,9 +6521,9 @@ export function link<T>() {
 
 function linkToCodecArbitrary<T>() {
   return <To extends Constraint>(
-    decodeFrom: To,
+    to: To,
     decode: SchemaGetter.Getter<T, NoInfer<To["Type"]>>
-  ): SchemaAST.Link => link<T>()(decodeFrom, { decode, encode: SchemaGetter.forbiddenEncoding })
+  ): SchemaAST.Link => link<T>()(to, { decode, encode: SchemaGetter.forbiddenEncoding })
 }
 
 // -----------------------------------------------------------------------------
