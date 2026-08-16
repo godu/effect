@@ -259,6 +259,9 @@ Store the token in logs or failure output when you need to reproduce a failure l
 guaranteed across releases of this unstable module. For a permanent regression test, add the materialized
 shrunk input as an ordinary example-based test.
 
+When `replay` is present, the token supplies the seed, attempt, effective size, and shrink path. The `runs`, `size`,
+`maxDiscards`, `maxShrinks`, and `seed` options are ignored; specifying them alongside `replay` does not alter the run.
+
 A `ReplayMismatch` is returned when the Schema, property, or implementation has changed enough that the recorded
 attempt or accepted shrink path no longer reproduces a failure. The token does not fingerprint the shrunk input or
 failure value, so a different failure at the same recorded coordinates is still a successful replay.

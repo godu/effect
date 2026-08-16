@@ -158,8 +158,10 @@ export type Replay = string
  * evaluated. When the budget is exhausted, checking returns the best shrunk input found so far. The `shrinks` field
  * in a `Falsified` result counts only candidates that were accepted as smaller failures.
  *
- * Replay follows an existing shrink path instead of searching for one, so `maxShrinks` is ignored when `replay` is
- * present.
+ * **Gotchas**
+ *
+ * When `replay` is present, its recorded seed, attempt, size, and shrink path control the run. The `runs`, `size`,
+ * `maxDiscards`, `maxShrinks`, and `seed` options are ignored.
  *
  * @category models
  * @since 4.0.0
