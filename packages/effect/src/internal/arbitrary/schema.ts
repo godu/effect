@@ -98,6 +98,14 @@ function mergeOrderedBound<T>(
     : [self, selfExclusive]
 }
 
+function mergeMinimum(self: number | undefined, that: number | undefined): number | undefined {
+  return self === undefined ? that : that === undefined ? self : Math.max(self, that)
+}
+
+function mergeMaximum(self: number | undefined, that: number | undefined): number | undefined {
+  return self === undefined ? that : that === undefined ? self : Math.min(self, that)
+}
+
 function mergeConstraint(self: Constraint | undefined, that: Constraint): Constraint {
   const order = that.order ?? self?.order
   if (self?.order !== undefined && that.order !== undefined && self.order !== that.order) {
@@ -123,28 +131,12 @@ function mergeConstraint(self: Constraint | undefined, that: Constraint): Constr
       that.exclusiveMaximum,
       1
     )
-  const mergeMinimum = (
-    key: "minLength" | "minSize" | "minProperties"
-  ): number | undefined =>
-    self?.[key] === undefined
-      ? that[key]
-      : that[key] === undefined
-      ? self[key]
-      : Math.max(self[key], that[key])
-  const mergeMaximum = (
-    key: "maxLength" | "maxSize" | "maxProperties"
-  ): number | undefined =>
-    self?.[key] === undefined
-      ? that[key]
-      : that[key] === undefined
-      ? self[key]
-      : Math.min(self[key], that[key])
-  const minLength = mergeMinimum("minLength")
-  const maxLength = mergeMaximum("maxLength")
-  const minSize = mergeMinimum("minSize")
-  const maxSize = mergeMaximum("maxSize")
-  const minProperties = mergeMinimum("minProperties")
-  const maxProperties = mergeMaximum("maxProperties")
+  const minLength = mergeMinimum(self?.minLength, that.minLength)
+  const maxLength = mergeMaximum(self?.maxLength, that.maxLength)
+  const minSize = mergeMinimum(self?.minSize, that.minSize)
+  const maxSize = mergeMaximum(self?.maxSize, that.maxSize)
+  const minProperties = mergeMinimum(self?.minProperties, that.minProperties)
+  const maxProperties = mergeMaximum(self?.maxProperties, that.maxProperties)
   const patterns = self?.patterns === undefined
     ? that.patterns
     : that.patterns === undefined
@@ -479,7 +471,7 @@ function arraySample(
   const childPulls = children.flatMap((child, index) =>
     child.shrinks === undefined
       ? []
-      : [Model.mapPull(
+      : [Effect.map(
         child.shrinks,
         (attempt) => Model.mapAttempt(attempt, (sample) => arraySample(replaceAt(children, index, sample), shape))
       )]
@@ -507,7 +499,7 @@ function arraySample(
   }
   const pulls = structural.length === 0
     ? childPulls
-    : [Model.mapPull(Model.pullFromArray(structural), (make) => make()), ...childPulls]
+    : [Effect.map(Model.pullFromArray(structural), (make) => make()), ...childPulls]
   return Model.makeSample(
     children.map((child) => child.value),
     pulls.length === 0 ? undefined : Model.concatPulls(pulls)
@@ -521,17 +513,15 @@ interface ObjectEntry {
   readonly removable: boolean
 }
 
-function normalizePropertyKeySample(sample: Model.Sample<any>): Option.Option<Model.Sample<PropertyKey>> {
+function normalizePropertyKeySample(sample: Model.Sample<any>): Model.Sample<PropertyKey> | undefined {
   const filtered = Model.filterSample(
     sample,
     (value): value is string | number | symbol =>
       typeof value === "string" || typeof value === "number" || typeof value === "symbol"
   )
-  return Option.isNone(filtered)
-    ? Option.none()
-    : Option.some(
-      Model.mapSample(filtered.value, (value) => typeof value === "symbol" ? value : globalThis.String(value))
-    )
+  return filtered === undefined
+    ? undefined
+    : Model.mapSample(filtered, (value) => typeof value === "symbol" ? value : globalThis.String(value))
 }
 
 function objectSample(
@@ -549,7 +539,7 @@ function objectSample(
     entry.sample.shrinks === undefined
       ? []
       : [
-        Model.mapPull(
+        Effect.map(
           entry.sample.shrinks,
           (attempt) =>
             Model.mapAttempt(
@@ -568,9 +558,9 @@ function objectSample(
       entry.keySample,
       (key) => !entries.some((other, otherIndex) => otherIndex !== index && other.key === key)
     )
-    if (Option.isNone(filtered) || filtered.value.shrinks === undefined) return []
-    return [Model.mapPull(
-      filtered.value.shrinks,
+    if (filtered?.shrinks === undefined) return []
+    return [Effect.map(
+      filtered.shrinks,
       (attempt) =>
         Model.mapAttempt(
           attempt,
@@ -592,7 +582,7 @@ function objectSample(
   const descendantPulls = [...childPulls, ...keyPulls]
   const pulls = structural.length === 0
     ? descendantPulls
-    : [Model.mapPull(Model.pullFromArray(structural), (make) => make()), ...descendantPulls]
+    : [Effect.map(Model.pullFromArray(structural), (make) => make()), ...descendantPulls]
   return Model.makeSample(make(entries), pulls.length === 0 ? undefined : Model.concatPulls(pulls))
 }
 
@@ -988,26 +978,14 @@ function shrinkInteger(current: number, target: number, tryTargetAsap: boolean):
   const out: Array<NumberShrink> = []
   const realGap = current - target
   let previous = tryTargetAsap ? undefined : target
-  if (realGap > 0) {
-    for (
-      let toRemove = tryTargetAsap ? realGap : Math.floor(realGap / 2);
-      toRemove > 0;
-      toRemove = Math.floor(toRemove / 2)
-    ) {
-      const value = toRemove === realGap ? target : current - toRemove
-      out.push({ value, context: previous })
-      previous = value
-    }
-  } else {
-    for (
-      let toRemove = tryTargetAsap ? realGap : Math.ceil(realGap / 2);
-      toRemove < 0;
-      toRemove = Math.ceil(toRemove / 2)
-    ) {
-      const value = toRemove === realGap ? target : current - toRemove
-      out.push({ value, context: previous })
-      previous = value
-    }
+  for (
+    let toRemove = tryTargetAsap ? realGap : Math.trunc(realGap / 2);
+    toRemove !== 0;
+    toRemove = Math.trunc(toRemove / 2)
+  ) {
+    const value = toRemove === realGap ? target : current - toRemove
+    out.push({ value, context: previous })
+    previous = value
   }
   return out
 }
@@ -1019,26 +997,14 @@ function shrinkNumber(current: number, target: number, tryTargetAsap: boolean): 
   const realGap = currentIndex - targetIndex
   let previous = tryTargetAsap ? undefined : target
   const out: Array<NumberShrink> = []
-  if (realGap > BigInt(0)) {
-    for (
-      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
-      toRemove > BigInt(0);
-      toRemove /= BigInt(2)
-    ) {
-      const value = toRemove === realGap ? target : Model.indexToNumber(currentIndex - toRemove)
-      out.push({ value, context: previous })
-      previous = value
-    }
-  } else {
-    for (
-      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
-      toRemove < BigInt(0);
-      toRemove /= BigInt(2)
-    ) {
-      const value = toRemove === realGap ? target : Model.indexToNumber(currentIndex - toRemove)
-      out.push({ value, context: previous })
-      previous = value
-    }
+  for (
+    let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
+    toRemove !== BigInt(0);
+    toRemove /= BigInt(2)
+  ) {
+    const value = toRemove === realGap ? target : Model.indexToNumber(currentIndex - toRemove)
+    out.push({ value, context: previous })
+    previous = value
   }
   return out
 }
@@ -1077,7 +1043,7 @@ function numberSample(
       value,
       candidates.length === 0
         ? undefined
-        : Model.mapPull(
+        : Effect.map(
           Model.pullFromArray(candidates),
           (candidate) => numberSample(candidate.value, minimum, maximum, false, candidate.context)
         )
@@ -1103,7 +1069,7 @@ function numberSample(
     value,
     candidates.length === 0
       ? undefined
-      : Model.mapPull(
+      : Effect.map(
         Model.pullFromArray(candidates),
         (candidate) => numberSample(candidate.value, minimum, maximum, true, candidate.context)
       )
@@ -1119,26 +1085,14 @@ function shrinkBigInt(current: bigint, target: bigint, tryTargetAsap: boolean): 
   const out: Array<BigIntShrink> = []
   const realGap = current - target
   let previous = tryTargetAsap ? undefined : target
-  if (realGap > BigInt(0)) {
-    for (
-      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
-      toRemove > BigInt(0);
-      toRemove /= BigInt(2)
-    ) {
-      const value = current - toRemove
-      out.push({ value, context: previous })
-      previous = value
-    }
-  } else {
-    for (
-      let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
-      toRemove < BigInt(0);
-      toRemove /= BigInt(2)
-    ) {
-      const value = current - toRemove
-      out.push({ value, context: previous })
-      previous = value
-    }
+  for (
+    let toRemove = tryTargetAsap ? realGap : realGap / BigInt(2);
+    toRemove !== BigInt(0);
+    toRemove /= BigInt(2)
+  ) {
+    const value = current - toRemove
+    out.push({ value, context: previous })
+    previous = value
   }
   return out
 }
@@ -1173,7 +1127,7 @@ function bigIntSample(
     value,
     candidates.length === 0
       ? undefined
-      : Model.mapPull(
+      : Effect.map(
         Model.pullFromArray(candidates),
         (candidate) => bigIntSample(candidate.value, minimum, maximum, candidate.context)
       )
@@ -1183,8 +1137,7 @@ function bigIntSample(
 /** @internal */
 export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<S["Type"]> {
   const rootAst = SchemaAST.toType(schema.ast)
-  const defaultConstraint = Symbol.for("~effect/arbitrary/defaultConstraint")
-  const cache = new WeakMap<SchemaAST.AST, Map<Constraint | symbol, Model.Compiled<any>>>()
+  const cache = new WeakMap<SchemaAST.AST, Map<Constraint | undefined, Model.Compiled<any>>>()
   const nodes: Array<Model.Compiled<any>> = []
   const suspendBodies = new Map<Model.Compiled<any>, Model.Compiled<any>>()
   const pending: Array<() => void> = []
@@ -1193,16 +1146,15 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     path: ReadonlyArray<PropertyKey>,
     inherited?: Constraint
   ): Model.Compiled<any> => {
-    const cacheKey: Constraint | symbol = inherited ?? defaultConstraint
     let entries = cache.get(ast)
-    const cached = entries?.get(cacheKey)
+    const cached = entries?.get(inherited)
     if (cached !== undefined) return cached
     if (entries === undefined) {
       entries = new Map()
       cache.set(ast, entries)
     }
-    const placeholder = Model.makePlaceholder<any>()
-    entries.set(cacheKey, placeholder)
+    const placeholder = Model.makeCompiled<any>([], () => infinity, () => Model.discarded)
+    entries.set(inherited, placeholder)
     nodes.push(placeholder)
     pending.push(() => {
       const checks = collectChecks(ast.checks, inherited)
@@ -1245,7 +1197,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             if (attempt._tag === "Discarded") return Model.discarded
             if (!state.shrinks) return passes(attempt.value) ? attempt : Model.discarded
             const sample = Model.filterSample(attempt, passes)
-            return Option.isSome(sample) ? sample.value : Model.discarded
+            return sample ?? Model.discarded
           })
       }
     })
@@ -1282,10 +1234,9 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           }
         )
       case "String": {
-        const patternConstraints = constraint?.patterns ?? []
         const patterns: Array<Regexp.Compiled> = []
-        for (const constraint of patternConstraints) {
-          const pattern = Regexp.compile(constraint)
+        for (const candidate of constraint?.patterns ?? []) {
+          const pattern = Regexp.compile(candidate)
           if (pattern !== undefined) patterns.push(pattern)
         }
         const [minimum, maximum] = lengthBounds(constraint, ["minLength", "maxLength"], path, "string")
@@ -1560,12 +1511,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         const possible = possibleCombinations(state.size, state.budget.remaining)
         if (possible.length === 0) return Model.discarded
         const [optionalCount, repeatCount] = possible[Model.randomLength(state, 0, possible.length - 1)]
+        // Explicit collection minima must stay productive while progressive checks are still at size zero.
+        const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
         // Lower homogeneous arrays directly when no shrink context is needed.
         if (
           !state.shrinks && elements.length === 0 && tail.length === 0 && head !== undefined &&
           (!head.mayRecurse || uniqueBy === undefined)
         ) {
-          const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
           return head.mayRecurse
             ? generateRepeatedRecursiveValues(head, repeatCount, itemState)
             : uniqueBy !== undefined
@@ -1585,8 +1537,6 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
             tailCount: tail.length,
             minimum
           }, state.shrinks)
-        // Explicit collection minima must stay productive while progressive checks are still at size zero.
-        const itemState = state.size >= repeatCount ? state : { ...state, size: repeatCount }
         if (uniqueBy === undefined) {
           return Model.mapComputation(
             generateSamples(selected, itemState),
@@ -1743,8 +1693,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
                 while (true) {
                   if (keyAttempt._tag === "Discarded") return Model.discarded
                   const normalized = normalizePropertyKeySample(keyAttempt)
-                  if (Option.isNone(normalized)) return Model.discarded
-                  keySample = normalized.value
+                  if (normalized === undefined) return Model.discarded
+                  keySample = normalized
                   if (!entries.some((entry) => entry.key === keySample.value)) break
                   if (retries++ >= 10) return Model.discarded
                   state.budget.remaining = budget
@@ -1813,7 +1763,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           if (attempt._tag === "Discarded") return Model.discarded
           return Model.mapComputation(
             Model.filterMapSample(attempt, decode),
-            (sample) => Option.isSome(sample) ? sample.value : Model.discarded
+            (sample) => sample ?? Model.discarded
           )
         })
     )
@@ -1821,12 +1771,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
 
   const root = recur(rootAst, [])
   for (let index = 0; index < pending.length; index++) pending[index]()
-  markRecursiveSuspends(nodes, suspendBodies)
-  const dependents = new Map<Model.Compiled<any>, Array<Model.Compiled<any>>>()
-  for (const node of nodes) dependents.set(node, [])
-  for (const node of nodes) {
-    for (const dependency of node.dependencies) dependents.get(dependency)?.push(node)
-  }
+  const dependents = analyzeDependencyGraph(nodes, suspendBodies)
   const recursiveQueue = nodes.filter((node) => node.recursive)
   for (let index = 0; index < recursiveQueue.length; index++) {
     const node = recursiveQueue[index]
@@ -1855,10 +1800,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
   return root
 }
 
-function markRecursiveSuspends(
+function analyzeDependencyGraph(
   nodes: ReadonlyArray<Model.Compiled<any>>,
   suspendBodies: ReadonlyMap<Model.Compiled<any>, Model.Compiled<any>>
-): void {
+): ReadonlyMap<Model.Compiled<any>, ReadonlyArray<Model.Compiled<any>>> {
   const visited = new Set<Model.Compiled<any>>()
   const finished: Array<Model.Compiled<any>> = []
   for (const root of nodes) {
@@ -1905,4 +1850,5 @@ function markRecursiveSuspends(
   for (const [suspend, body] of suspendBodies) {
     suspend.recursive = component.get(suspend) === component.get(body)
   }
+  return reverse
 }

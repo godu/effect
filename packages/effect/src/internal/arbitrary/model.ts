@@ -118,25 +118,17 @@ export function pullFromArray<A>(values: ReadonlyArray<A>): Pull.Pull<A> {
 }
 
 /** @internal */
-export function mapPull<A, B>(self: Pull.Pull<A>, f: (value: A) => B): Pull.Pull<B> {
-  return Effect.map(self, f)
-}
-
-/** @internal */
 export function concatPulls<A>(pulls: ReadonlyArray<Pull.Pull<A>>): Pull.Pull<A> {
   let index = 0
   const loop = (): Pull.Pull<A> =>
-    Effect.suspend(() => {
-      if (index >= pulls.length) return Cause.done()
-      return Pull.matchEffect(pulls[index], {
-        onSuccess: Effect.succeed,
-        onDone: () => {
+    Effect.suspend(() =>
+      index >= pulls.length
+        ? Cause.done()
+        : Pull.catchDone(pulls[index], () => {
           index++
           return loop()
-        },
-        onFailure: Effect.failCause
-      })
-    })
+        })
+    )
   return loop()
 }
 
@@ -157,7 +149,7 @@ export function sampleFromShrink<A>(value: A, shrink: (value: A) => ReadonlyArra
   const values = shrink(value)
   return makeSample(
     value,
-    values.length === 0 ? undefined : mapPull(pullFromArray(values), (value) => sampleFromShrink(value, shrink))
+    values.length === 0 ? undefined : Effect.map(pullFromArray(values), (value) => sampleFromShrink(value, shrink))
   )
 }
 
@@ -167,7 +159,7 @@ export function mapSample<A, B>(self: Sample<A>, f: (value: A) => B): Sample<B> 
     f(self.value),
     self.shrinks === undefined
       ? undefined
-      : mapPull(self.shrinks, (attempt) => mapAttempt(attempt, (sample) => mapSample(sample, f)))
+      : Effect.map(self.shrinks, (attempt) => mapAttempt(attempt, (sample) => mapSample(sample, f)))
   )
 }
 
@@ -238,27 +230,25 @@ function filterPull<A>(source: Pull.Pull<Attempt<A>>, predicate: (value: A) => b
 export const filterMapSample = <A, B>(
   self: Sample<A>,
   f: (value: A) => Computation<Option.Option<B>>
-): Computation<Option.Option<Sample<B>>> =>
+): Computation<Sample<B> | undefined> =>
   mapComputation(
     f(self.value),
     (value) =>
       Option.isNone(value)
-        ? Option.none<Sample<B>>()
-        : Option.some(makeSample(
+        ? undefined
+        : makeSample(
           value.value,
           self.shrinks === undefined ? undefined : filterMapPull(self.shrinks, f)
-        ))
+        )
   )
 
 /** @internal */
-export const filterSample = <A>(self: Sample<A>, predicate: (value: A) => boolean): Option.Option<Sample<A>> =>
+export const filterSample = <A>(self: Sample<A>, predicate: (value: A) => boolean): Sample<A> | undefined =>
   predicate(self.value)
-    ? Option.some(
-      self.shrinks === undefined
-        ? self
-        : makeSample(self.value, filterPull(self.shrinks, predicate))
-    )
-    : Option.none()
+    ? self.shrinks === undefined
+      ? self
+      : makeSample(self.value, filterPull(self.shrinks, predicate))
+    : undefined
 
 /** @internal */
 export function makeGenerator<A>(minCost: number, generate: Generator<A>["generate"]): Generator<A> {
@@ -279,11 +269,6 @@ export function makeCompiled<A>(
     computeMinCost,
     generate
   }
-}
-
-/** @internal */
-export function makePlaceholder<A>(): Compiled<A> {
-  return makeCompiled([], () => Number.POSITIVE_INFINITY, () => discarded)
 }
 
 /** @internal */
@@ -490,16 +475,10 @@ function bigIntBiasRanges(minimum: bigint, maximum: bigint): ReadonlyArray<BigIn
   return minimum < BigInt(0) ? [closeToMaximum, closeToMinimum] : [closeToMinimum, closeToMaximum]
 }
 
-function selectNumberRange<A extends NumberRange>(state: GenerationState, ranges: ReadonlyArray<A>): A {
-  if (ranges.length === 1) return ranges[0]
-  const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
-  return index < 0 ? ranges[0] : ranges[index + 1]
-}
-
-function selectBigIntRange<A extends BigIntRange>(state: GenerationState, ranges: ReadonlyArray<A>): A {
-  if (ranges.length === 1) return ranges[0]
-  const index = randomInt(state, -2 * (ranges.length - 1), ranges.length - 2)
-  return index < 0 ? ranges[0] : ranges[index + 1]
+function selectBiased<A>(state: GenerationState, values: ReadonlyArray<A>): A {
+  if (values.length === 1) return values[0]
+  const index = randomInt(state, -2 * (values.length - 1), values.length - 2)
+  return index < 0 ? values[0] : values[index + 1]
 }
 
 /** @internal */
@@ -507,14 +486,11 @@ export function makeRandomNumericInt(
   minimum: number,
   maximum: number
 ): (state: GenerationState) => number {
-  const full = { minimum, maximum, random: makeRandomInt(minimum, maximum) }
-  const biased = numberBiasRanges(minimum, maximum).map((range) => ({
-    ...range,
-    random: makeRandomInt(range.minimum, range.maximum)
-  }))
+  const full = makeRandomInt(minimum, maximum)
+  const biased = numberBiasRanges(minimum, maximum).map((range) => makeRandomInt(range.minimum, range.maximum))
   return (state) => {
-    const range = randomInt(state, 1, state.biasFactor) === 1 ? selectNumberRange(state, biased) : full
-    return range.random(state)
+    const random = randomInt(state, 1, state.biasFactor) === 1 ? selectBiased(state, biased) : full
+    return random(state)
   }
 }
 
@@ -523,14 +499,11 @@ export function makeRandomNumericBigInt(
   minimum: bigint,
   maximum: bigint
 ): (state: GenerationState) => bigint {
-  const full = { minimum, maximum, random: makeRandomBigInt(minimum, maximum) }
-  const biased = bigIntBiasRanges(minimum, maximum).map((range) => ({
-    ...range,
-    random: makeRandomBigInt(range.minimum, range.maximum)
-  }))
+  const full = makeRandomBigInt(minimum, maximum)
+  const biased = bigIntBiasRanges(minimum, maximum).map((range) => makeRandomBigInt(range.minimum, range.maximum))
   return (state) => {
-    const range = randomInt(state, 1, state.biasFactor) === 1 ? selectBigIntRange(state, biased) : full
-    return range.random(state)
+    const random = randomInt(state, 1, state.biasFactor) === 1 ? selectBiased(state, biased) : full
+    return random(state)
   }
 }
 

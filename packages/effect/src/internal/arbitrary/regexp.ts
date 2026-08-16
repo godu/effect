@@ -3,11 +3,7 @@ import * as Model from "./model.ts"
 
 type Pattern = Schema.Annotations.ToCodecArbitrary.Pattern
 
-type Node = Empty | Literal | Character | Concatenation | Alternation | Repetition
-
-interface Empty {
-  readonly _tag: "Empty"
-}
+type Node = Literal | Character | Concatenation | Alternation | Repetition
 
 interface Literal {
   readonly _tag: "Literal"
@@ -51,7 +47,7 @@ export interface Compiled {
   readonly shrink: (value: string, minimumLength: number) => ReadonlyArray<string>
 }
 
-const empty: Empty = { _tag: "Empty" }
+const empty: Literal = { _tag: "Literal", value: "" }
 const maximumCodePoint = 0x10ffff
 const highSurrogateMinimum = 0xd800
 const lowSurrogateMaximum = 0xdfff
@@ -99,7 +95,7 @@ function character(intervals: ReadonlyArray<Interval>): Character {
   return { _tag: "Character", intervals: normalizeIntervals(intervals) }
 }
 
-function literal(value: string): Node {
+function literal(value: string): Literal {
   return value.length === 0 ? empty : { _tag: "Literal", value }
 }
 
@@ -112,7 +108,6 @@ function concatenation(nodes: ReadonlyArray<Node>): Node {
     pending = ""
   }
   for (const node of nodes) {
-    if (node._tag === "Empty") continue
     if (node._tag === "Literal") {
       pending += node.value
     } else if (node._tag === "Concatenation") {
@@ -170,7 +165,6 @@ function restrictCharacterCodePoints(node: Node, maximum: number): Node {
       return alternation(node.nodes.map((child) => restrictCharacterCodePoints(child, maximum)))
     case "Repetition":
       return { ...node, node: restrictCharacterCodePoints(node.node, maximum) }
-    case "Empty":
     case "Literal":
       return node
   }
@@ -251,6 +245,15 @@ function canonicalCharacter(node: Character, length: number): string | undefined
     }
   }
   return undefined
+}
+
+function isDecimal(value: string | undefined): boolean {
+  return value !== undefined && value >= "0" && value <= "9"
+}
+
+function isHexadecimal(value: string | undefined): boolean {
+  return value !== undefined &&
+    (value >= "0" && value <= "9" || value >= "a" && value <= "f" || value >= "A" && value <= "F")
 }
 
 class Parser {
@@ -390,7 +393,7 @@ class Parser {
 
   private parseNatural(): number | undefined {
     const start = this.index
-    while (this.isDecimal(this.peek())) this.index++
+    while (isDecimal(this.peek())) this.index++
     if (start === this.index) return undefined
     const value = globalThis.Number(this.source.slice(start, this.index))
     return Number.isSafeInteger(value) ? value : undefined
@@ -469,7 +472,7 @@ class Parser {
       case "f":
         return literal("\f")
       case "0":
-        return this.isDecimal(this.peek()) ? undefined : literal("\0")
+        return isDecimal(this.peek()) ? undefined : literal("\0")
       case "c": {
         const control = this.source[this.index++]
         if (control === undefined || !/[A-Za-z]/.test(control)) return undefined
@@ -481,7 +484,7 @@ class Parser {
         if (this.peek() === "{") {
           this.index++
           const start = this.index
-          while (this.isHexadecimal(this.peek())) this.index++
+          while (isHexadecimal(this.peek())) this.index++
           if (start === this.index || this.peek() !== "}") return undefined
           const value = Number.parseInt(this.source.slice(start, this.index), 16)
           this.index++
@@ -497,13 +500,13 @@ class Parser {
       case undefined:
         return undefined
       default:
-        return this.isDecimal(token) ? undefined : literal(token)
+        return isDecimal(token) ? undefined : literal(token)
     }
   }
 
   private parseCodePoint(length: number): Node | undefined {
     const encoded = this.source.slice(this.index, this.index + length)
-    if (encoded.length !== length || ![...encoded].every(this.isHexadecimal)) return undefined
+    if (encoded.length !== length || ![...encoded].every(isHexadecimal)) return undefined
     this.index += length
     return literal(globalThis.String.fromCharCode(Number.parseInt(encoded, 16)))
   }
@@ -518,24 +521,18 @@ class Parser {
   private peek(): string | undefined {
     return this.source[this.index]
   }
-
-  private isDecimal = (value: string | undefined): boolean => value !== undefined && value >= "0" && value <= "9"
-
-  private isHexadecimal = (value: string | undefined): boolean =>
-    value !== undefined &&
-    (value >= "0" && value <= "9" || value >= "a" && value <= "f" || value >= "A" && value <= "F")
 }
 
 type Lengths = ReadonlyArray<boolean>
-type LengthCache = Map<Node, Map<number, Lengths>>
+type LengthCache = Map<Node, Lengths>
 
 function emptyLengths(limit: number): Array<boolean> {
-  return globalThis.Array.from({ length: limit + 1 }, () => false)
+  return globalThis.Array(limit + 1).fill(false)
 }
 
-function concatenateLengths(left: Lengths, right: Lengths, limit: number): Lengths {
+function concatenateLengths(left: Lengths, right: Lengths, limit: number): Array<boolean> {
   const out = emptyLengths(limit)
-  for (let leftLength = 0; leftLength < left.length; leftLength++) {
+  for (let leftLength = 0; leftLength <= limit && leftLength < left.length; leftLength++) {
     if (!left[leftLength]) continue
     for (let rightLength = 0; rightLength + leftLength <= limit && rightLength < right.length; rightLength++) {
       if (right[rightLength]) out[leftLength + rightLength] = true
@@ -544,7 +541,7 @@ function concatenateLengths(left: Lengths, right: Lengths, limit: number): Lengt
   return out
 }
 
-function repetitionLengths(node: Repetition, child: Lengths, limit: number): Lengths {
+function repetitionLengths(node: Repetition, child: Lengths, limit: number): Array<boolean> {
   const out = emptyLengths(limit)
   const nullable = child[0] === true
   let smallestPositive = 1
@@ -559,53 +556,50 @@ function repetitionLengths(node: Repetition, child: Lengths, limit: number): Len
     if (count >= minimum) {
       for (let length = 0; length <= limit; length++) if (current[length]) out[length] = true
     }
-    if (count < maximum) current = concatenateLengths(current, child, limit) as Array<boolean>
+    if (count < maximum) current = concatenateLengths(current, child, limit)
   }
   return out
 }
 
 function possibleLengths(node: Node, limit: number, cache: LengthCache): Lengths {
-  let entries = cache.get(node)
-  if (entries === undefined) {
-    entries = new Map()
-    cache.set(node, entries)
-  }
-  const cached = entries.get(limit)
-  if (cached !== undefined) return cached
-  const out = emptyLengths(limit)
-  entries.set(limit, out)
+  const cached = cache.get(node)
+  if (cached !== undefined && cached.length > limit) return cached
+  let out: Array<boolean>
   switch (node._tag) {
-    case "Empty":
-      out[0] = true
-      return out
-    case "Literal":
+    case "Literal": {
+      out = emptyLengths(limit)
       if (node.value.length <= limit) out[node.value.length] = true
-      return out
-    case "Character":
+      break
+    }
+    case "Character": {
+      out = emptyLengths(limit)
       if (node.intervals.some((interval) => countCodePoints(interval, 1) > 0) && limit >= 1) out[1] = true
       if (node.intervals.some((interval) => countCodePoints(interval, 2) > 0) && limit >= 2) out[2] = true
-      return out
-    case "Alternation":
+      break
+    }
+    case "Alternation": {
+      out = emptyLengths(limit)
       for (const child of node.nodes) {
         const lengths = possibleLengths(child, limit, cache)
         for (let length = 0; length <= limit; length++) if (lengths[length]) out[length] = true
       }
-      return out
+      break
+    }
     case "Concatenation": {
       let current = emptyLengths(limit)
       current[0] = true
       for (const child of node.nodes) {
-        current = concatenateLengths(current, possibleLengths(child, limit, cache), limit) as Array<boolean>
+        current = concatenateLengths(current, possibleLengths(child, limit, cache), limit)
       }
-      for (let length = 0; length <= limit; length++) out[length] = current[length]
-      return out
+      out = current
+      break
     }
-    case "Repetition": {
-      const lengths = repetitionLengths(node, possibleLengths(node.node, limit, cache), limit)
-      for (let length = 0; length <= limit; length++) out[length] = lengths[length]
-      return out
-    }
+    case "Repetition":
+      out = repetitionLengths(node, possibleLengths(node.node, limit, cache), limit)
+      break
   }
+  cache.set(node, out)
+  return out
 }
 
 function generateSequence(
@@ -649,7 +643,7 @@ function repetitionCounts(node: Repetition, length: number, cache: LengthCache):
   current[0] = true
   for (let count = 0; count <= maximum; count++) {
     if (count >= minimum && current[length]) counts.push(count)
-    if (count < maximum) current = concatenateLengths(current, child, length) as Array<boolean>
+    if (count < maximum) current = concatenateLengths(current, child, length)
   }
   return counts
 }
@@ -661,8 +655,6 @@ function generateExact(
   cache: LengthCache
 ): string | undefined {
   switch (node._tag) {
-    case "Empty":
-      return length === 0 ? "" : undefined
     case "Literal":
       return node.value.length === length ? node.value : undefined
     case "Character":
@@ -679,7 +671,7 @@ function generateExact(
       const counts = repetitionCounts(node, length, cache)
       if (counts.length === 0) return undefined
       const count = counts[Model.randomIndex(state, counts.length)]
-      return generateSequence(globalThis.Array.from({ length: count }, () => node.node), length, state, cache)
+      return generateSequence(globalThis.Array(count).fill(node.node), length, state, cache)
     }
   }
 }
@@ -705,8 +697,6 @@ function canonicalSequence(nodes: ReadonlyArray<Node>, length: number, cache: Le
 
 function canonicalExact(node: Node, length: number, cache: LengthCache): string | undefined {
   switch (node._tag) {
-    case "Empty":
-      return length === 0 ? "" : undefined
     case "Literal":
       return node.value.length === length ? node.value : undefined
     case "Character":
@@ -721,7 +711,7 @@ function canonicalExact(node: Node, length: number, cache: LengthCache): string 
       const count = repetitionCounts(node, length, cache)[0]
       return count === undefined
         ? undefined
-        : canonicalSequence(globalThis.Array.from({ length: count }, () => node.node), length, cache)
+        : canonicalSequence(globalThis.Array(count).fill(node.node), length, cache)
     }
   }
 }
@@ -755,8 +745,6 @@ function structuralShrinks(
 
 function minimumLength(node: Node): number {
   switch (node._tag) {
-    case "Empty":
-      return 0
     case "Literal":
       return node.value.length
     case "Character":

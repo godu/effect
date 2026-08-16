@@ -222,7 +222,7 @@ export function filter<A>(self: Arbitrary<A>, predicate: (value: A) => boolean):
         if (attempt._tag === "Discarded") return attempt
         if (!state.shrinks) return predicate(attempt.value) ? attempt : Model.discarded
         const sample = Model.filterSample(attempt, predicate)
-        return Option.isSome(sample) ? sample.value : Model.discarded
+        return sample ?? Model.discarded
       })
   ))
 }
@@ -247,7 +247,7 @@ export function filterMap<A, B, X>(
         }
         return Model.mapComputation(
           Model.filterMapSample(attempt, apply),
-          (sample) => Option.isSome(sample) ? sample.value : Model.discarded
+          (sample) => sample ?? Model.discarded
         )
       })
   ))
@@ -416,12 +416,8 @@ const evaluateProperty = <A, E, R>(
   })
 }
 
-const pullNext = <A>(pull: Pull.Pull<A>): Effect.Effect<Option.Option<A>> =>
-  Pull.matchEffect(pull, {
-    onSuccess: (value) => Effect.succeed(Option.some(value)),
-    onDone: () => Effect.succeed(Option.none()),
-    onFailure: Effect.failCause
-  })
+const pullNext = <A>(pull: Pull.Pull<Model.Attempt<A>>): Effect.Effect<Model.Attempt<A> | undefined> =>
+  Pull.catchDone(pull, () => Effect.succeed(undefined))
 
 const shrink = Effect.fnUntraced(function*<A, E, R>(
   initial: Model.Sample<A>,
@@ -444,9 +440,9 @@ const shrink = Effect.fnUntraced(function*<A, E, R>(
     while (inspected < maximum) {
       if (current.shrinks === undefined) break
       const candidate = yield* pullNext(current.shrinks)
-      if (Option.isNone(candidate)) break
+      if (candidate === undefined) break
       inspected++
-      const attempt = candidate.value
+      const attempt = candidate
       if (attempt._tag === "Discarded") continue
       const outcome = yield* evaluateProperty(property, attempt.value)
       if (outcome._tag !== "Passed") {
@@ -478,9 +474,9 @@ const followReplay = Effect.fnUntraced(function*<A, E, R>(
     let index = 0
     while (index <= targetIndex) {
       const candidate = yield* pullNext(current.shrinks)
-      if (Option.isNone(candidate)) return { _tag: "ReplayMismatch", reason: "ShrinkPathUnavailable" } as const
-      if (candidate.value._tag === "Discarded") continue
-      if (index === targetIndex) selected = candidate.value
+      if (candidate === undefined) return { _tag: "ReplayMismatch", reason: "ShrinkPathUnavailable" } as const
+      if (candidate._tag === "Discarded") continue
+      if (index === targetIndex) selected = candidate
       index++
     }
     const outcome = yield* evaluateProperty(property, selected!.value)
