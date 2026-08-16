@@ -1887,12 +1887,7 @@ describe("fromJsonSchemaDocument", () => {
                     "payload": null
                   },
                   "annotations": {
-                    "expected": "an array with unique items",
-                    "toCodecArbitrary": {
-                      "constraint": {
-                        "unique": true
-                      }
-                    }
+                    "expected": "an array with unique items"
                   },
                   "aborted": false
                 }
@@ -4827,12 +4822,7 @@ describe("fromJsonSchemaDocument", () => {
                     "payload": null
                   },
                   "annotations": {
-                    "expected": "an array with unique items",
-                    "toCodecArbitrary": {
-                      "constraint": {
-                        "unique": true
-                      }
-                    }
+                    "expected": "an array with unique items"
                   },
                   "aborted": false
                 }
