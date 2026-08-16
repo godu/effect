@@ -317,3 +317,47 @@ it.effect.prop(
       assert.include(a + b + c, b)
     })
 )
+
+describe("property failures", () => {
+  const Input = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
+  const pureDefectValues: Array<number> = []
+  const effectDefectValues: Array<number> = []
+  let interruptedRuns = 0
+
+  afterAll(() => {
+    assert.deepStrictEqual(pureDefectValues, [8, 1])
+    assert.deepStrictEqual(effectDefectValues, [8, 1])
+    assert.strictEqual(interruptedRuns, 1)
+  })
+
+  it.prop(
+    "shrinks synchronous defects",
+    [Input],
+    ([value]) => {
+      pureDefectValues.push(value)
+      throw new Error("property defect")
+    },
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+
+  it.effect.prop(
+    "shrinks Effect defects",
+    [Input],
+    ([value]) =>
+      Effect.sync(() => {
+        effectDefectValues.push(value)
+        assert.strictEqual(value, 0)
+      }),
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+
+  it.effect.prop(
+    "preserves interruption",
+    [Input],
+    () => {
+      interruptedRuns++
+      return Effect.interrupt
+    },
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+})

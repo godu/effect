@@ -40,7 +40,8 @@ shrunk counterexample and replay token in property failures.
 
 Use the Arbitrary runner for all `@effect/vitest` property tests. Property inputs may combine Schemas and Arbitraries,
 and check options are available through `arbitrary`. Raw fast-check arbitraries and the `fastCheck` options object are
-no longer supported.
+no longer supported. As with the previous fast-check adapter, thrown exceptions, defects, and typed failures from a
+property are shrinkable falsifications; Effect interruption remains an interruption.
 
 Optimize `BigDecimal.Order` and `BigDecimal.Equivalence` with a shared hybrid comparator. Ordinary scale differences
 use cached, bounded coefficient alignment, while large differences are compared without materializing their decimal

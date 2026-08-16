@@ -6,7 +6,7 @@ without exposing a third-party property-testing engine.
 The module is currently unstable. Its import path, result types, generation policies, and replay format may change as
 the implementation is exercised by more applications.
 
-If you are upgrading from the fast-check bridge available in `effect@4.0.0-rc.109`, see the
+If you are upgrading from the earlier Schema arbitrary integration available in `effect@4.0.0-rc.109`, see the
 [migration guide](ARBITRARY-MIGRATION.md).
 
 ## Getting Started
@@ -434,20 +434,23 @@ it.effect.prop(
 )
 ```
 
-Raw fast-check arbitraries and the `fastCheck` options object are not supported. Use Arbitraries when a property input
-needs composition beyond a Schema.
+Third-party arbitrary values and runner-specific option objects are not supported. Use native Arbitraries when a
+property input needs composition beyond a Schema.
 
 `@effect/vitest` turns `Falsified`, `Exhausted`, and `ReplayMismatch` results into test failures. Falsified output
 includes the shrunk counterexample and replay token.
 
+The adapter treats a property as falsified when it returns `false`, throws, or completes with any non-interruption
+Effect failure. Typed failures, assertion defects, and other defects are therefore shrunk and reported with the final
+counterexample. Effect interruption remains an interruption and is not converted into a falsification. A property that
+returns normally with any value other than `false`, including `void`, passes for that generated input.
+
 ## Advantages of the Native Implementation
 
-The native implementation is not a compatibility layer around fast-check. It gives Effect ownership of the public
-model, generation semantics, and runner while keeping fast-check usable as an independent library when its broader
-catalog is needed.
+The native implementation gives Effect ownership of the public model, generation semantics, and runner.
 
-- **No fast-check version coupling.** The `effect` package no longer depends on fast-check or exposes its `Arbitrary`,
-  constraints, depth identifiers, paths, or runner options. An application can use any fast-check major separately.
+- **No third-party engine coupling.** The `effect` package owns its `Arbitrary`, constraints, recursion model, replay
+  paths, and runner options. Applications do not inherit another engine's versions or public types through Schema.
 - **One language for data domains.** Schema describes structure, checks, canonical codecs, declarations, and recursion.
   The Arbitrary module does not mirror that catalog with a builder interface, HKT encoding, or second public AST.
 - **Schema-aware recursion.** Recursive and mutually recursive components are analyzed automatically. Derivation fails
@@ -464,22 +467,17 @@ catalog is needed.
   registry, field paths, or a public generator builder.
 - **Replay as one value.** A falsification carries one opaque token for the original attempt and complete accepted
   shrink path. Native replay regenerates and re-evaluates the original failing attempt before traversing that full path,
-  and reports a mismatch when the recorded coordinates no longer reproduce a failure. The paired fast-check runner
-  can start directly from its recorded path.
+  and reports a mismatch when the recorded coordinates no longer reproduce a failure.
 - **Dependent shrinking designed for the native engine.** `flatMap` checkpoints randomness after its source. Shrinking
   the source therefore changes the dependent constraint while retaining the same subsequent random choices. A shared
   residual recursion budget prevents nested `flatMap` calls from each receiving a fresh optional allowance.
-- **Smaller and faster in the repository fixtures.** The removed materialized fast-check bridge measured 79.00 KB
-  minified and gzipped. The current native `schema-toArbitrary.ts` fixture is substantially smaller. In the current
-  warm Node 24 benchmarks against corresponding hand-written fast-check 4.9.0 Arbitraries, the native scenarios are
-  faster;
-  these are measurements of the documented fixtures, not a claim that every distribution or workload is universally
-  faster.
+- **Focused bundle and runtime paths.** Common Schema shapes compile to direct generation loops, and sampling without
+  shrinking stays on a synchronous lane. Bundle and runtime fixtures track these paths as implementation budgets rather
+  than universal performance guarantees.
 
-Some of these gains come from tighter integration and some from narrower scope. The native engine can compile common
-Schema shapes into direct loops, keep a synchronous no-shrink sampling lane, and omit defensive machinery required by
-a general-purpose standalone library. It also deliberately does not reproduce every fast-check constructor,
-distribution, reporter, example facility, or runner option.
+Some of these gains come from tighter integration and some from narrower scope. The native engine deliberately focuses
+on Schema-derived domains and Effect execution rather than reproducing every constructor, distribution, reporter,
+example facility, or runner option of a general-purpose property-testing engine.
 
 ## Current Scope
 
@@ -588,9 +586,9 @@ size even when the public types remain unchanged.
   generation and shrinking when allowed.
 - Unbounded Int and BigInt magnitude grows with size. Ordinary strings use printable ASCII plus an explicit JavaScript
   edge corpus; regex generation supports a defined subset and counts UTF-16 code units.
-- Exact probabilities, seeds-to-values, and shrink orders are implementation details. Several low-level techniques are
-  adapted from fast-check and pure-rand and are attributed next to their implementations; the native value proposition
-  does not depend on presenting those techniques as Effect inventions.
+- Exact probabilities, seeds-to-values, and shrink orders are implementation details. Low-level techniques derived from
+  prior property-testing and PRNG implementations are attributed next to their source code; the module's value does not
+  depend on presenting those techniques as Effect inventions.
 
 ### Structural Generation and Shrinking
 
@@ -647,13 +645,14 @@ size even when the public types remain unchanged.
   decoding, property evaluation, and lazy shrink traversal remain interruptible. Parallel property evaluation is not
   part of the current runner.
 
-### Deliberate Differences and Boundaries
+### Deliberate Boundaries
 
-- The same seed is not expected to match fast-check, and distributions or local counterexamples need not be identical.
-  For compiler-derived and Link-derived generation, the guarantees are domain validity, bounded generation,
-  deterministic replay within an implementation, productive recursion, and the documented shrink policies. A
-  Schema-local `arbitrary` override is explicitly trusted for structural type correctness.
-- The module does not expose the private `Sample` carrier, custom shrink trees, parallel checking, complete fast-check
-  `Parameters`, formatted assertion reporting outside `@effect/vitest`, or cross-release replay stability.
-- Fast-check remains appropriate when an application needs its larger standalone constructor catalog or exact runner
-  behavior. The native engine is optimized for Effect Schema and Effect execution rather than universal replacement.
+- Seeds-to-values, distributions, and local counterexamples are implementation details. For compiler-derived and
+  Link-derived generation, the guarantees are domain validity, bounded generation, deterministic replay within an
+  implementation, productive recursion, and the documented shrink policies. A Schema-local `arbitrary` override is
+  explicitly trusted for structural type correctness.
+- The module does not expose the private `Sample` carrier, custom shrink trees, parallel checking, a general-purpose
+  runner configuration surface, formatted assertion reporting outside `@effect/vitest`, or cross-release replay
+  stability.
+- The engine is optimized for Effect Schema and Effect execution rather than serving as a universal property-testing
+  toolkit.

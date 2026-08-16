@@ -33,6 +33,10 @@ This import enhances the standard `it` function from `vitest` with several power
 | `it.prop`      | Runs property tests using Effect `Schema` and `Arbitrary` values.                                   |
 | `it.flakyTest` | Retries an Effect that might occasionally fail until it succeeds or reaches the configured timeout. |
 
+Property tests shrink callbacks that return `false`, throw, or complete with a non-interruption Effect failure. This
+includes failed assertions, typed failures, and defects. Effect interruption still interrupts the test. Returning
+normally with any value other than `false`, including `void`, passes for that generated input.
+
 ## Writing Tests with `it.effect`
 
 Here's how to use `it.effect` to write your tests:

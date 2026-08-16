@@ -82,6 +82,10 @@ const makeArbitrary = (arbitraries: Arbitraries): Arbitrary.Arbitrary<any> =>
       ))
   )
 
+function formatPropertyError(error: unknown): string {
+  return Cause.isCause(error) ? Cause.pretty(error) : Inspectable.toStringUnknown(error)
+}
+
 function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string | undefined {
   switch (result._tag) {
     case "Passed":
@@ -92,7 +96,7 @@ function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string |
         `${
           result.failure._tag === "ReturnedFalse"
             ? "Failure: returned false"
-            : `Failure: ${Inspectable.toStringUnknown(result.failure.error)}`
+            : `Failure: ${formatPropertyError(result.failure.error)}`
         }\n` +
         `Replay: ${result.replay}`
     case "Exhausted":
@@ -102,6 +106,19 @@ function formatCheckFailure<A, E>(result: Arbitrary.CheckResult<A, E>): string |
   }
 }
 
+const normalizeProperty = <A, E, R>(
+  property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
+  value: A
+): Effect.Effect<boolean, E | Cause.Cause<E>, R> =>
+  Effect.catchCause(
+    Effect.suspend(() => {
+      const output = property(value)
+      return Effect.isEffect(output) ? output : Effect.succeed(output)
+    }),
+    (cause): Effect.Effect<never, E | Cause.Cause<E>> =>
+      Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.fail(cause)
+  )
+
 const runCheck = <A, E>(
   ctx: V.TestContext,
   arbitrary: Arbitrary.Arbitrary<A>,
@@ -109,10 +126,13 @@ const runCheck = <A, E>(
   options: Arbitrary.CheckOptions | undefined
 ): Promise<void> =>
   runTest(ctx)(
-    Effect.flatMapEager(Arbitrary.checkEffect(arbitrary, property, options), (result) => {
-      const failure = formatCheckFailure(result)
-      return failure === undefined ? Effect.void : Effect.die(new Error(failure))
-    })
+    Effect.flatMapEager(
+      Arbitrary.checkEffect(arbitrary, (value) => normalizeProperty(property, value), options),
+      (result) => {
+        const failure = formatCheckFailure(result)
+        return failure === undefined ? Effect.void : Effect.die(new Error(failure))
+      }
+    )
   )
 
 const makeItProxy = <Methods extends object>(

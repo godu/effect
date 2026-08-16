@@ -525,18 +525,73 @@ an explicitly separate diagnostic suite rather than weakening the paired registr
 Update public JSDoc, [ARBITRARY.md](ARBITRARY.md), the migration guide, and the changeset only after the relevant phase
 passes its semantic, runtime, and bundle gates.
 
+## Holistic design review findings
+
+The following findings are open design questions, not approved implementation requirements. Discuss and resolve them
+one at a time in the listed order. When a finding is resolved, record the decision, its verification gate, and whether
+it produces a production slice or is intentionally closed without changes.
+
+1. **Resolved: Vitest property failures participate in shrinking and replay.** Twelve of the sixteen runtime property
+   tests present during the review used `assert` or `expect`; only four used a purely boolean property. On `main`,
+   fast-check treated every synchronous throw and asynchronous rejection from a property as a shrinkable failure, not
+   only `AssertionError`. The native adapter now restores that behavior by converting every non-interruption Cause into
+   a typed property failure while re-emitting interruption. Focused tests verify shrinking for a synchronous defect and
+   an assertion defect, plus single-evaluation interruption; public JSDoc and both Arbitrary and Vitest guides document
+   the policy.
+2. **Replay decoding is partial and unversioned.** A replay token is an opaque string publicly but an unchecked JSON
+   tuple internally. Malformed values can defect, the format has no version, and replay identifies generation and
+   shrink coordinates rather than a semantic failure. Decide the validated format, mismatch reasons, and compatibility
+   promise before stabilization.
+3. **Exhaustion and shrink diagnostics are too weak.** `SampleError` and `Exhausted` do not report the effective seed or
+   origin of discards, and `Falsified` does not reveal whether the shrink budget truncated the search. Design an opt-in
+   or low-allocation diagnostic model without adding another error parameter to `Arbitrary` or penalizing the common
+   generation path.
+4. **The public Declaration seam exposes Effect-owned compiler vocabulary.** `GenerationConstraint` is a flat bag of
+   unrelated optional fields, while `Schemas` contains both the general `Array(Item, options)` operation and named
+   Effect built-ins. Decide which portion is a real interface for third-party Declaration authors and which portion
+   should remain private implementation.
+5. **Declaration type parameters are eager graph dependencies even when the selected Link ignores them.** The compiler
+   compiles every type parameter and adds it to the dependency graph, although generation executes only the selected
+   `link.to`. Verify the phantom or unsupported parameter case, then decide whether dependencies should be derived only
+   from the reachable Link target.
+6. **Incompatible `Order` identities cause eager derivation failure.** Two semantically compatible bounds using
+   distinct `Order` function objects are rejected during constraint merging. Decide whether the compiler should instead
+   abandon constructive lowering for those bounds and rely on the authoritative residual checks.
+7. **`size` combines a local generation scale with shared recursion fuel.** It is not a global bound on total output
+   size: sibling strings, arrays, and properties can each observe it, while recursive edges share a consumable budget.
+   Clarify the public contract and internal terminology before adding further size-sensitive combinators.
+8. **The Schema-local `arbitrary` annotation is a trusted structural override.** The compiler reapplies checks attached
+   directly to the annotated node but does not run the complete Schema parser over every replacement value. Decide
+   whether the current advanced contract is explicit enough or whether the interface needs stronger validation or
+   stronger naming.
+9. **Independent product composition escapes the Arbitrary seam.** `@effect/vitest` currently turns Arbitraries into
+   annotated `Schema.Unknown` values in order to build tuples and records. Evaluate a single `Arbitrary.all` operation
+   for tuple and record products without introducing a parallel primitive or collection catalog.
+10. **The first shrink frontier is not fully lazy.** Several samples compute their initial candidate collection before
+    the property result is known, so successful checks can pay for shrinking that is never consumed. Prototype moving
+    candidate construction behind the first `Pull`, preserving order, replay, bundle size, and warm failure runtime.
+11. **Rejected-node promotion uses front-array operations.** The filter and `flatMap` promotion loops use
+    `shift`/`unshift`, which can become quadratic on deep rejected frontiers. Verify that a `push`/`pop` stack preserves
+    the current depth-first order and seeded replay before replacing it.
+12. **Runtime speed does not establish generation quality.** Audit semantic-class coverage, boundary frequency,
+    collision rate, shrink quality, and entropy across the Schema catalog. Add permanent generation and shrinking
+    coverage for RegExp, whose compiler is too substantial to remain visible only to temporary probes.
+13. **The maintenance surface has poor locality.** The main Arbitrary test file mixes public contracts, seeded kernel
+    characterization, compiler behavior, distributions, and scheduler properties; the guide, technical appendix, and
+    completed P0-P5 history also overlap. Split tests by responsibility and archive settled design history without
+    deleting useful characterization coverage.
+14. **The service requirement of Declaration Links is implicit.** `Arbitrary<A>` has no environment parameter, while a
+    Link decode can in principle be Effectful. Prove and enforce that Links used for Arbitrary generation are
+    service-free, or explicitly decide whether environment requirements belong in the Arbitrary interface.
+
 ## Independent research backlog
 
-These are separate projects and must not block the prioritized path above:
+After the review findings above are resolved, these remain separate research projects:
 
-1. add structured discard reasons and runner health diagnostics after `filterMap` creates a concrete failure payload to
-   preserve;
-2. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
-3. profile decoded collection and Declaration Links only if the new baseline identifies a regression;
-4. audit boundary-oriented distributions across the complete Schema catalog without attempting to imitate every
-   fast-check frequency;
-5. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
-6. evaluate automatic persistence and reuse of concrete counterexamples last.
+1. evaluate private finite-domain metadata when constructive `unique` generation demonstrates real exhaustion cases;
+2. profile decoded collection and Declaration Links only if a new baseline identifies a regression;
+3. compare the current `Sample` tree with trace-informed shrinking and private structural spans;
+4. evaluate automatic persistence and reuse of concrete counterexamples last.
 
 Concrete counterexample persistence is distinct from replay-token persistence. After `map` or `flatMap`, an Arbitrary
 may no longer have a Schema or codec capable of serializing its output, while the existing opaque replay token remains

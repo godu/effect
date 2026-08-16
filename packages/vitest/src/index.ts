@@ -67,6 +67,14 @@ export namespace Vitest {
     fails: Vitest.Test<R>
 
     /**
+     * Runs an Effectful property test using Schema or Arbitrary inputs.
+     *
+     * **Details**
+     *
+     * Returning `false` or completing with any non-interruption failure falsifies the property and triggers shrinking.
+     * This includes typed Effect failures, thrown exceptions, and defects such as failed assertions. Effect
+     * interruption continues to interrupt the test.
+     *
      * @since 4.0.0
      */
     prop: <const Arbs extends Arbitraries, A, E>(
@@ -111,6 +119,13 @@ export namespace Vitest {
     }
 
     /**
+     * Runs a synchronous property test using Schema or Arbitrary inputs.
+     *
+     * **Details**
+     *
+     * Returning `false` or throwing falsifies the property and triggers shrinking. A callback that returns normally
+     * without returning `false` passes for that generated input.
+     *
      * @since 4.0.0
      */
     readonly prop: <const Arbs extends Arbitraries>(
