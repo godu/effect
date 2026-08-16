@@ -1,4 +1,4 @@
-import { type Effect, hole, Schema, type SchemaAST } from "effect"
+import { type Effect, hole, Result, Schema, type SchemaAST } from "effect"
 import type * as BigDecimal from "effect/BigDecimal"
 import type * as DateTime from "effect/DateTime"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
@@ -10,18 +10,45 @@ describe("Arbitrary", () => {
     type A = typeof schema.Type
 
     expect(Arbitrary.schema(schema)).type.toBe<Arbitrary.Arbitrary<A>>()
-    expect(Arbitrary.sample(Arbitrary.schema(schema))).type.toBe<
+    expect(Arbitrary.sampleEffect(Arbitrary.schema(schema))).type.toBe<
       Effect.Effect<ReadonlyArray<A>, Arbitrary.SampleError>
     >()
   })
 
-  it("check preserves property errors and requirements", () => {
+  it("checkEffect preserves property errors and requirements", () => {
     const arbitrary = Arbitrary.schema(Schema.String)
     const property = hole<(value: string) => Effect.Effect<boolean, "error", "service">>()
 
-    expect(Arbitrary.check(arbitrary, property)).type.toBe<
+    expect(Arbitrary.checkEffect(arbitrary, property)).type.toBe<
       Effect.Effect<Arbitrary.CheckResult<string, "error">, never, "service">
     >()
+  })
+
+  it("composes Arbitraries", () => {
+    const strings = Arbitrary.schema(Schema.String)
+    const stringOrNumber = Arbitrary.schema(Schema.Union([Schema.String, Schema.Number]))
+
+    expect(Arbitrary.map(strings, (value) => value.length)).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(Arbitrary.map((value: string) => value.length)(strings)).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(strings.pipe(Arbitrary.map((value) => value.length))).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(Arbitrary.filter(stringOrNumber, (value): value is string => typeof value === "string")).type.toBe<
+      Arbitrary.Arbitrary<string>
+    >()
+    expect(
+      Arbitrary.filter((value: string | number) => typeof value === "string")(stringOrNumber)
+    ).type.toBe<Arbitrary.Arbitrary<string>>()
+    expect(
+      Arbitrary.filterMap(
+        strings,
+        (value) => value.length === 0 ? Result.fail("empty" as const) : Result.succeed(value.length)
+      )
+    ).type.toBe<Arbitrary.Arbitrary<number>>()
+    expect(
+      Arbitrary.Union([
+        strings,
+        Arbitrary.schema(Schema.Number)
+      ])
+    ).type.toBe<Arbitrary.Arbitrary<string | number>>()
   })
 
   it("types toCodecArbitrary inputs from the declaration target and decoded type parameters", () => {

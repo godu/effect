@@ -104,7 +104,7 @@ const runNativeCheck = <A, E>(
   options: NativeArbitrary.CheckOptions | undefined
 ): Promise<void> =>
   runTest(ctx)(
-    Effect.flatMapEager(NativeArbitrary.check(arbitrary, property, options), (result) => {
+    Effect.flatMapEager(NativeArbitrary.checkEffect(arbitrary, property, options), (result) => {
       const failure = formatNativeCheckFailure(result)
       return failure === undefined ? Effect.void : Effect.die(new Error(failure))
     })

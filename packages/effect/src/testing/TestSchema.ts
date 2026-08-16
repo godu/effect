@@ -198,7 +198,7 @@ export class Asserts<S extends Schema.Constraint> {
     const decodeUnknownEffect = SchemaParser.decodeUnknownEffect(this.schema)
     const encodeEffect = SchemaParser.encodeEffect(this.schema)
     const arbitrary = Arbitrary.schema(this.schema)
-    return Effect.runPromise(Arbitrary.check(
+    return Effect.runPromise(Arbitrary.checkEffect(
       arbitrary,
       (value) =>
         encodeEffect(value).pipe(
@@ -302,7 +302,7 @@ export class Asserts<S extends Schema.Constraint> {
       verifyGeneration(options?: Arbitrary.CheckOptions): void {
         const is = Schema.is(schema)
         const arbitrary = Arbitrary.schema(schema)
-        assertPropertyPassed(Effect.runSync(Arbitrary.check(arbitrary, is, { runs: 20, ...options })))
+        assertPropertyPassed(Effect.runSync(Arbitrary.checkEffect(arbitrary, is, { runs: 20, ...options })))
       }
     }
   }

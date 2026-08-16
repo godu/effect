@@ -172,6 +172,57 @@
               "size": 128
             },
             {
+              "name": "map-sample-128-native",
+              "export": "mapSample128",
+              "scenario": "arbitrary-map-sample-128",
+              "operation": "sample-map",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "passing-filter-sample-128-native",
+              "export": "passingFilterSample128",
+              "scenario": "arbitrary-passing-filter-sample-128",
+              "operation": "sample-filter",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "selective-filter-sample-32-native",
+              "export": "selectiveFilterSample32",
+              "scenario": "arbitrary-selective-filter-sample-32",
+              "operation": "sample-filter",
+              "astTags": [
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "filter-map-sample-128-native",
+              "export": "filterMapSample128",
+              "scenario": "arbitrary-filter-map-sample-128",
+              "operation": "sample-filter-map",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "union-sample-128-native",
+              "export": "unionSample128",
+              "scenario": "arbitrary-union-sample-128",
+              "operation": "sample-union",
+              "astTags": [
+                "Union",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
               "name": "check-pass-100-native",
               "export": "checkPass100",
               "scenario": "arbitrary-check-pass-100",
@@ -315,6 +366,41 @@
               "export": "literalSample128",
               "scenario": "arbitrary-literal-sample-128",
               "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "map-sample-128-fast-check-v4",
+              "export": "mapSample128",
+              "scenario": "arbitrary-map-sample-128",
+              "operation": "sample-map",
+              "size": 128
+            },
+            {
+              "name": "passing-filter-sample-128-fast-check-v4",
+              "export": "passingFilterSample128",
+              "scenario": "arbitrary-passing-filter-sample-128",
+              "operation": "sample-filter",
+              "size": 128
+            },
+            {
+              "name": "selective-filter-sample-32-fast-check-v4",
+              "export": "selectiveFilterSample32",
+              "scenario": "arbitrary-selective-filter-sample-32",
+              "operation": "sample-filter",
+              "size": 32
+            },
+            {
+              "name": "filter-map-sample-128-fast-check-v4",
+              "export": "filterMapSample128",
+              "scenario": "arbitrary-filter-map-sample-128",
+              "operation": "sample-filter-map",
+              "size": 128
+            },
+            {
+              "name": "union-sample-128-fast-check-v4",
+              "export": "unionSample128",
+              "scenario": "arbitrary-union-sample-128",
+              "operation": "sample-union",
               "size": 128
             },
             {

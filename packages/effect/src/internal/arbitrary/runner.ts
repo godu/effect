@@ -1,7 +1,9 @@
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
+import { pipeArguments } from "../../Pipeable.ts"
 import * as Pull from "../../Pull.ts"
 import * as Random from "../../Random.ts"
+import * as Result from "../../Result.ts"
 import * as Scheduler from "../../Scheduler.ts"
 import type * as Schema from "../../Schema.ts"
 import type {
@@ -29,12 +31,15 @@ interface ReplayData {
 }
 
 const ArbitraryProto = {
-  [TypeId]: TypeId
+  [TypeId]: TypeId,
+  pipe() {
+    return pipeArguments(this, arguments)
+  }
 }
 
-function make<A>(compiled: Model.Compiled<A>): Arbitrary<A> {
+function make<A>(generator: Model.Generator<A>): Arbitrary<A> {
   return Object.create(ArbitraryProto, {
-    gen: { value: compiled }
+    gen: { value: generator }
   })
 }
 
@@ -140,13 +145,13 @@ function makeAttemptRandom(seed: SeedState, attempt: number): Model.GenerationRa
 }
 
 const generateAttemptRaw = <A>(
-  compiled: Model.Compiled<A>,
+  generator: Model.Generator<A>,
   seed: SeedState,
   attempt: number,
   size: number,
   shrinks: boolean
 ): Model.Generation<A> =>
-  compiled.generate({
+  generator.generate({
     size,
     shrinks,
     // This is fast-check v4.9.0's run-dependent numeric bias schedule (MIT). It makes short checks edge-heavy while
@@ -154,17 +159,17 @@ const generateAttemptRaw = <A>(
     // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/property/IRawProperty.ts#L92-L95
     biasFactor: 2 + Math.floor(Math.log10(attempt + 1)),
     random: makeAttemptRandom(seed, attempt),
-    budget: { remaining: compiled.minCost + size }
+    budget: { remaining: generator.minCost + size }
   })
 
 const generateAttempt = <A>(
-  compiled: Model.Compiled<A>,
+  generator: Model.Generator<A>,
   seed: SeedState,
   attempt: number,
   size: number,
   shrinks: boolean
 ): Effect.Effect<Model.Attempt<A>> =>
-  Model.toEffectGeneration(generateAttemptRaw(compiled, seed, attempt, size, shrinks))
+  Model.toEffectGeneration(generateAttemptRaw(generator, seed, attempt, size, shrinks))
 
 const resolveMasterSeed = (seed: string | number | undefined): Effect.Effect<string | number> =>
   seed === undefined ? Random.nextInt : Effect.succeed(seed)
@@ -175,7 +180,69 @@ export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Typ
 }
 
 /** @internal */
-export const sample = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, options?: SampleOptions) {
+export function map<A, B>(self: Arbitrary<A>, f: (value: A) => B): Arbitrary<B> {
+  return make(Model.makeGenerator(
+    self.gen.minCost,
+    (state) =>
+      Model.mapGeneration(
+        self.gen.generate(state),
+        (attempt) => attempt._tag === "Discarded" ? attempt : Model.mapSample(attempt, f)
+      )
+  ))
+}
+
+/** @internal */
+export function filter<A>(self: Arbitrary<A>, predicate: (value: A) => boolean): Arbitrary<A> {
+  return make(Model.makeGenerator(
+    self.gen.minCost,
+    (state) =>
+      Model.mapGeneration(self.gen.generate(state), (attempt) => {
+        if (attempt._tag === "Discarded") return attempt
+        if (!state.shrinks) return predicate(attempt.value) ? attempt : Model.discarded
+        const sample = Model.filterSample(attempt, predicate)
+        return Option.isSome(sample) ? sample.value : Model.discarded
+      })
+  ))
+}
+
+/** @internal */
+export function filterMap<A, B, X>(
+  self: Arbitrary<A>,
+  f: (value: A) => Result.Result<B, X>
+): Arbitrary<B> {
+  const apply = (value: A): Option.Option<B> => {
+    const result = f(value)
+    return Result.isSuccess(result) ? Option.some(result.success) : Option.none()
+  }
+  return make(Model.makeGenerator(
+    self.gen.minCost,
+    (state) =>
+      Model.flatMapGeneration(self.gen.generate(state), (attempt) => {
+        if (attempt._tag === "Discarded") return attempt
+        if (!state.shrinks) {
+          const result = apply(attempt.value)
+          return Option.isSome(result) ? Model.makeSample(result.value) : Model.discarded
+        }
+        return Model.mapComputation(
+          Model.filterMapSample(attempt, apply),
+          (sample) => Option.isSome(sample) ? sample.value : Model.discarded
+        )
+      })
+  ))
+}
+
+/** @internal */
+export function union(members: ReadonlyArray<Arbitrary<any>>): Arbitrary<any> {
+  if (members.length === 0) throw new Error("Arbitrary.Union requires at least one member")
+  const generators = members.map((member) => member.gen)
+  return make(Model.makeGenerator(
+    Math.min(...generators.map((generator) => generator.minCost)),
+    (state) => Model.generateUnion(generators, state)
+  ))
+}
+
+/** @internal */
+export const sampleEffect = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, options?: SampleOptions) {
   const count = natural(options?.count, 10, "count")
   const size = natural(options?.size, 10, "size")
   const maxDiscards = natural(options?.maxDiscards, Math.max(100, count * 10), "maxDiscards")
@@ -289,7 +356,7 @@ const followReplay = Effect.fnUntraced(function*<A, E, R>(
 })
 
 /** @internal */
-export const check = Effect.fnUntraced(function*<A, E, R>(
+export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
   self: Arbitrary<A>,
   property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
   options?: CheckOptions

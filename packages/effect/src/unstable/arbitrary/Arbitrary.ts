@@ -4,8 +4,12 @@
  * @since 4.0.0
  */
 import type * as Effect from "../../Effect.ts"
+import type * as Filter from "../../Filter.ts"
+import { dual } from "../../Function.ts"
 import type * as Model from "../../internal/arbitrary/model.ts"
 import * as Internal from "../../internal/arbitrary/runner.ts"
+import type { Pipeable } from "../../Pipeable.ts"
+import type { Predicate, Refinement } from "../../Predicate.ts"
 import type * as Schema from "../../Schema.ts"
 import type * as Types from "../../Types.ts"
 
@@ -30,16 +34,20 @@ export type TypeId = "~effect/unstable/arbitrary/Arbitrary"
  *
  * **When to use**
  *
- * Use as the result of {@link schema} and as the input to {@link sample} or {@link check}.
+ * Use as the result of {@link schema} and as the input to {@link sampleEffect} or {@link checkEffect}.
+ *
+ * **Details**
+ *
+ * Arbitraries implement `Pipeable`, so data-last combinators can be composed with `.pipe(...)`.
  *
  * @category models
  * @since 4.0.0
  */
-export interface Arbitrary<out A> {
+export interface Arbitrary<out A> extends Pipeable {
   readonly [TypeId]: TypeId
   readonly "~A": Types.Covariant<A>
   /** @internal */
-  readonly gen: Model.Compiled<A>
+  readonly gen: Model.Generator<A>
 }
 
 /**
@@ -233,6 +241,95 @@ export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Typ
 }
 
 /**
+ * Transforms every generated value and its shrink candidates.
+ *
+ * **When to use**
+ *
+ * Use when you want to derive generated values from an existing `Arbitrary` without changing its generation or shrink
+ * structure.
+ *
+ * @category mapping
+ * @since 4.0.0
+ */
+export const map: {
+  <A, B>(f: (value: A) => B): (self: Arbitrary<A>) => Arbitrary<B>
+  <A, B>(self: Arbitrary<A>, f: (value: A) => B): Arbitrary<B>
+} = dual(2, <A, B>(self: Arbitrary<A>, f: (value: A) => B): Arbitrary<B> => Internal.map(self, f))
+
+/**
+ * Keeps generated values and shrink candidates that satisfy a predicate or refinement.
+ *
+ * **When to use**
+ *
+ * Use when a condition cannot be expressed constructively by the source Schema or after values have been transformed.
+ *
+ * **Gotchas**
+ *
+ * Rejected generated values count against `maxDiscards`. Prefer Schema checks when possible because the Schema compiler
+ * may generate matching values directly.
+ *
+ * @see {@link filterMap} for transforming and filtering simultaneously
+ * @category filtering
+ * @since 4.0.0
+ */
+export const filter: {
+  <A, B extends A>(refinement: Refinement<A, B>): (self: Arbitrary<A>) => Arbitrary<B>
+  <A>(predicate: Predicate<A>): <B extends A>(self: Arbitrary<B>) => Arbitrary<B>
+  <A, B extends A>(self: Arbitrary<A>, refinement: Refinement<A, B>): Arbitrary<B>
+  <A>(self: Arbitrary<A>, predicate: Predicate<A>): Arbitrary<A>
+} = dual(2, <A>(self: Arbitrary<A>, predicate: Predicate<A>): Arbitrary<A> => Internal.filter(self, predicate))
+
+/**
+ * Transforms accepted generated values and discards rejected values.
+ *
+ * **When to use**
+ *
+ * Use when transformation and validation need to happen in one step after constructing an `Arbitrary`.
+ *
+ * **Gotchas**
+ *
+ * Failed filters discard generated roots and count against `maxDiscards`. Failures are not exposed in sampling or
+ * checking results.
+ *
+ * @see {@link map} for transformations that cannot reject
+ * @see {@link filter} for retaining original values that satisfy a condition
+ * @category filtering
+ * @since 4.0.0
+ */
+export const filterMap: {
+  <A, B, X>(f: Filter.Filter<A, B, X>): (self: Arbitrary<A>) => Arbitrary<B>
+  <A, B, X>(self: Arbitrary<A>, f: Filter.Filter<A, B, X>): Arbitrary<B>
+} = dual(
+  2,
+  <A, B, X>(self: Arbitrary<A>, f: Filter.Filter<A, B, X>): Arbitrary<B> => Internal.filterMap(self, f)
+)
+
+/**
+ * Combines an array of existing Arbitraries into one `Arbitrary`.
+ *
+ * **When to use**
+ *
+ * Use when generated values should come from one of several static alternatives.
+ *
+ * **Details**
+ *
+ * Members compatible with the current generation budget are selected uniformly. Shrinking first tries the earliest
+ * member with a strictly lower minimum cost, then continues within the selected member.
+ *
+ * **Gotchas**
+ *
+ * Throws when `members` is empty. The initial interface does not support weighted alternatives.
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export function Union<const Members extends ReadonlyArray<Arbitrary<any>>>(
+  members: Members
+): Arbitrary<Types.Covariant.Type<Members[number]["~A"]>> {
+  return Internal.union(members)
+}
+
+/**
  * Generates a bounded collection of values from an `Arbitrary`.
  *
  * **When to use**
@@ -242,11 +339,11 @@ export function schema<S extends Schema.Constraint>(schema: S): Arbitrary<S["Typ
  * @category running
  * @since 4.0.0
  */
-export function sample<A>(
+export function sampleEffect<A>(
   self: Arbitrary<A>,
   options?: SampleOptions
 ): Effect.Effect<ReadonlyArray<A>, SampleError> {
-  return Internal.sample(self, options)
+  return Internal.sampleEffect(self, options)
 }
 
 /**
@@ -273,10 +370,10 @@ export function sample<A>(
  * @category running
  * @since 4.0.0
  */
-export function check<A, E = never, R = never>(
+export function checkEffect<A, E = never, R = never>(
   self: Arbitrary<A>,
   property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
   options?: CheckOptions
 ): Effect.Effect<CheckResult<A, E>, never, R> {
-  return Internal.check(self, property, options)
+  return Internal.checkEffect(self, property, options)
 }

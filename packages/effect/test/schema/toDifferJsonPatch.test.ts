@@ -27,7 +27,7 @@ const SerializablePropertyKey = Schema.Union([SerializableSymbol, Schema.Finite,
 const roundtrip = Effect.fnUntraced(function*<T, E>(codec: Schema.Codec<T, E>) {
   const differ = Schema.toDifferJsonPatch(codec)
   const arbitrary = Arbitrary.schema(Schema.Tuple([codec, codec]))
-  const result = yield* Arbitrary.check(
+  const result = yield* Arbitrary.checkEffect(
     arbitrary,
     ([v1, v2]) => {
       // avoid prototype-poisoning-ish values that aren't valid JSON-ish containers for patching

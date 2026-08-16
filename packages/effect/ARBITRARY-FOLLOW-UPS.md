@@ -12,12 +12,12 @@ verifiable slices rather than as one combined redesign. Each slice must preserve
 
 ## Approved direction
 
-The next public interface should grow in this order:
+The public interface is growing in this order:
 
 ```text
 schema
-  -> map, filter, filterMap
-  -> Union
+  -> map, filter, filterMap [implemented]
+  -> Union [implemented]
   -> Schema-local override
   -> flatMap
 ```
@@ -38,15 +38,15 @@ The following architectural decisions are settled:
 
 ## Prioritized implementation path
 
-| Priority | Slice                                   | Relative complexity | Main result                                                |
-| -------- | --------------------------------------- | ------------------- | ---------------------------------------------------------- |
-| P0       | Baseline and existing bundle regression | Small               | Reliable comparison point                                  |
-| P1       | Private `Generator` seam                | Small to medium     | Schema compiler metadata stays local to the compiler       |
-| P2       | `map`, `filter`, and `filterMap`        | Medium              | General transformation and bounded residual rejection      |
-| P3       | `Union` and seeded external generators  | Medium              | Static choice and a userland Faker integration             |
-| P4       | Direct Schema-local override            | Medium to large     | Nested distribution customization without paths/registries |
-| P5       | Single-pass `flatMap`                   | Large               | Dependent generation with deterministic shrinking/replay   |
-| P6       | Quality and optimization research       | Evidence-dependent  | Diagnostics, generation quality, and later optimizations   |
+| Priority | Slice                                   | Status                             | Main result                                                |
+| -------- | --------------------------------------- | ---------------------------------- | ---------------------------------------------------------- |
+| P0       | Baseline and existing bundle regression | Complete                           | Reliable comparison point                                  |
+| P1       | Private `Generator` seam                | Complete                           | Schema compiler metadata stays local to the compiler       |
+| P2       | `map`, `filter`, and `filterMap`        | Complete                           | General transformation and bounded residual rejection      |
+| P3       | `Union` and seeded external generators  | `Union` complete; adapter userland | Static choice and a userland Faker integration             |
+| P4       | Direct Schema-local override            | Pending                            | Nested distribution customization without paths/registries |
+| P5       | Single-pass `flatMap`                   | Pending                            | Dependent generation with deterministic shrinking/replay   |
+| P6       | Quality and optimization research       | Pending                            | Diagnostics, generation quality, and later optimizations   |
 
 Each phase should be implemented as one coherent slice after its architectural decisions are approved. Do not land a
 series of partially usable internal mechanisms.
@@ -59,15 +59,13 @@ Use the current branch as a baseline, then make the existing bundle regression t
    artifact;
 2. retain all 16 warm native/fast-check comparisons and the existing cold scenario;
 3. run the complete bundle comparison and record exact results for `config.ts` and `schema-toArbitrary.ts`;
-4. eliminate the current approximately `0.16 KB` `config.ts` regression as an isolated production slice;
-5. rerun the runtime and bundle baselines on that slice's final commit;
+4. retain the measured `config.ts` result as an accepted cost of keeping `toCodecArbitrary` local and uniform;
+5. use the current commit as the bundle baseline for subsequent slices;
 6. run the existing Arbitrary tests, typetests, and package checks.
 
-Previous ablations identified the URL generation Link captured by `Schema.URL` as the source of the `config.ts`
-regression. They also showed that moving every built-in Link into the palette imposes a much larger fixed cost on every
-Arbitrary consumer, while replacing URL generation with one general RegExp materially slows sampling. Revalidate those
-results on the current `HEAD`; start from the narrow URL-only relocation, but present its exact `config.ts` and
-`schema-toArbitrary.ts` tradeoff before applying it.
+The comparison at `6fd1d0d1` measured `config.ts` at 21.26 KB versus 21.10 KB on `main`, a 0.16 KB gzip increase. This is
+accepted: it preserves one uniform annotation protocol, and the marginal cost is small relative to a real application
+bundle. Do not introduce a URL-specific palette result or move every built-in Link into the palette to recover it.
 
 The performance table in the current changeset is a historical reference, not the baseline for these follow-ups. The
 latest recorded measurements outperform the equivalent fast-check fixture in all 16 reported warm scenarios, so
@@ -77,7 +75,7 @@ Exit gate:
 
 - reproducible before/after runtime and bundle baselines tied to exact commits;
 - existing seeded samples, counterexamples, shrink counts, and replay tests recorded as characterization tests;
-- no production changes beyond the isolated `config.ts` regression fix.
+- no production change for the accepted `config.ts` delta.
 
 ## P1: private `Generator` seam
 
@@ -85,7 +83,7 @@ Exit gate:
 
 `Model.Compiled` currently mixes two responsibilities:
 
-- the executable generator required by `Arbitrary`, `sample`, and `check`;
+- the executable generator required by `Arbitrary`, `sampleEffect`, and `checkEffect`;
 - the mutable dependency and fixed-point metadata required only while compiling Schema.
 
 Separate them behind a private seam:
@@ -118,6 +116,10 @@ Exit gate:
 - all existing runtime scenarios remain within measurement noise;
 - all unrelated bundle fixtures are unchanged;
 - no compiler metadata is added to the public `Arbitrary` interface.
+
+Implementation result: `Arbitrary.gen`, combinators, and the runner now depend only on `Generator`; mutable dependency
+and fixed-point fields remain on `Compiled`. The complete existing seeded test suite is unchanged. The focused
+`schema-toArbitrary.ts` fixture moved from 33.48 KB to 33.49 KB gzip, a measured +0.01 KB (+0.04%).
 
 ## P2: `map`, `filter`, and `filterMap`
 
@@ -175,20 +177,28 @@ evaluated again during shrinking and replay.
 
 - reading time, `Math.random`, or mutable external state is unsupported;
 - mutating a generated value is unsupported;
-- thrown exceptions become defects of the `Effect` returned by `sample` or `check`;
+- thrown exceptions become defects of the `Effect` returned by `sampleEffect` or `checkEffect`;
 - callback invocation counts are not part of the interface.
 
 ### Verification
 
 - dual/data-last typing and refinement inference;
 - complete-tree mapping and non-injective mapping without deduplication;
-- bounded reject-all behavior for both `sample` and `check`;
+- bounded reject-all behavior for both `sampleEffect` and `checkEffect`;
 - promotion of accepted descendants through rejected nodes;
 - successful transformation and rejection through `filterMap`;
 - deterministic seed and replay;
 - callback defects and interruption;
 - warm scenarios for mapping, passing filtering, selective filtering, and `filterMap`;
 - focused bundle fixture, with all Schema-only and unrelated fixtures unchanged.
+
+Implementation result: runtime tests cover complete-tree mapping, bounded rejection, descendant promotion,
+transformation, replay, defects, and `Union` parity separately. Type tests cover both dual forms and refinement
+inference. In the five-round Node 24 matrix, native `map`, passing `filter`, selective `filter`, and `filterMap` measured
+12.98, 12.96, 39.44, and 28.12 microseconds respectively, versus 65.78, 62.00, 64.15, and 72.63 microseconds for the
+equivalent fast-check v4 operations. The focused `arbitrary-combinators.ts` fixture is 33.49 KB gzip. After adding the
+standard `Pipeable` method, the existing `schema-toArbitrary.ts` fixture is 33.51 KB versus 33.48 KB at the baseline, a
+measured +0.03 KB.
 
 ## P3: `Union` and seeded external generators
 
@@ -206,18 +216,19 @@ const NameDistribution = Arbitrary.Union([
 It does not accept `Schema.Union`'s `mode` option. Schema's option controls validation, while this constructor selects a
 generation branch.
 
-Recommended semantics to validate and approve during the P3 prototype:
+`Arbitrary.Union` deliberately reuses the complete internal generation policy of `Schema.Union`:
 
-- select members uniformly;
-- derive the static minimum from the member minima and top up the selected member when its minimum is larger than the
-  residual budget;
-- preserve the selected member's own shrink tree;
-- do not introduce cross-member shrinking in the first implementation;
-- keep selection and replay deterministic.
+- members whose minimum cost fits the remaining budget are eligible;
+- an eligible member is selected uniformly;
+- the static minimum is the lowest member minimum;
+- the selected member preserves its own shrink tree;
+- when the selected member has a higher minimum cost, shrinking first tries the earliest member with the lowest
+  minimum cost, then continues through the selected member's tree;
+- selection, shrinking, and replay remain deterministic.
 
-Uniform weighting, the absence of cross-member shrinking, and the exact budget policy are not yet settled architectural
-decisions. The prototype must measure them and present the alternatives before the public implementation. If the
-recommended budget top-up is approved, implement it as a private helper reusable by `flatMap`.
+The implementation and Schema compiler call the same private helper rather than maintaining two equivalent copies.
+The public test compares their complete seeded output for a recursive, budget-sensitive union. Native static choice
+measured 8.66 microseconds for 128 samples, versus 50.57 microseconds for equivalent fast-check v4 `oneof`.
 
 ### Faker and similar libraries
 

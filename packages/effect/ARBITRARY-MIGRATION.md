@@ -58,11 +58,11 @@ const Person = Schema.Struct({
 
 const personArbitrary = Arbitrary.schema(Person)
 const samples = await Effect.runPromise(
-  Arbitrary.sample(personArbitrary, { count: 20, seed: 42 })
+  Arbitrary.sampleEffect(personArbitrary, { count: 20, seed: 42 })
 )
 ```
 
-`Arbitrary.sample` returns an `Effect` because sampling is interruptible, uses Effect `Random` when no seed is
+`Arbitrary.sampleEffect` returns an `Effect` because sampling is interruptible, uses Effect `Random` when no seed is
 provided, and reports bounded generation exhaustion as a typed `SampleError`.
 
 The generated values still use the decoded Schema `Type`. The sequence and distribution are not compatible with
@@ -84,14 +84,14 @@ FastCheck.assert(
 )
 ```
 
-Now `Arbitrary.check` runs a pure or Effectful property and returns a structured result:
+Now `Arbitrary.checkEffect` runs a pure or Effectful property and returns a structured result:
 
 ```ts
 import { Effect, Schema } from "effect"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const result = await Effect.runPromise(
-  Arbitrary.check(
+  Arbitrary.checkEffect(
     Arbitrary.schema(Schema.Int),
     (value) => Number.isInteger(value),
     { runs: 100, seed: 42 }
@@ -99,7 +99,7 @@ const result = await Effect.runPromise(
 )
 ```
 
-Unlike `FastCheck.assert`, `Arbitrary.check` does not throw for an ordinary falsification. Handle `Passed`,
+Unlike `FastCheck.assert`, `Arbitrary.checkEffect` does not throw for an ordinary falsification. Handle `Passed`,
 `Falsified`, `Exhausted`, and `ReplayMismatch` explicitly, or use `@effect/vitest`, which converts non-passing results
 into test failures.
 
@@ -112,7 +112,7 @@ The most common options map as follows:
 
 | Previous fast-check option | Native option        | Migration note                                                     |
 | -------------------------- | -------------------- | ------------------------------------------------------------------ |
-| `numRuns`                  | `count` or `runs`    | Use `count` for `sample` and `runs` for `check`.                   |
+| `numRuns`                  | `count` or `runs`    | Use `count` for `sampleEffect` and `runs` for `checkEffect`.       |
 | `seed`                     | `seed`               | The type is compatible, but generated sequences are not.           |
 | `path`                     | `replay`             | Existing fast-check paths cannot be converted.                     |
 | `maxSkipsPerRun`           | `maxDiscards`        | Native uses one absolute discard budget, not a multiplier per run. |
@@ -131,7 +131,7 @@ Fast-check replay used a seed plus a shrink `path`. Native replay uses one opaqu
 result:
 
 ```ts
-const replayed = Arbitrary.check(arbitrary, property, {
+const replayed = Arbitrary.checkEffect(arbitrary, property, {
   replay: previousFailure.replay
 })
 ```
@@ -316,8 +316,8 @@ Migration is not only an import rename. Review the following differences:
 1. Replace `effect/testing/FastCheck` imports. Use the native Arbitrary module for Schema generation and import
    `"fast-check"` directly only where it is still independently required.
 2. Replace `Schema.toArbitrary(schema)(FastCheck)` with `Arbitrary.schema(schema)`.
-3. Replace `FastCheck.sample` with `Arbitrary.sample` and run the returned Effect.
-4. Replace `FastCheck.check` or `FastCheck.assert` for Schema-derived inputs with `Arbitrary.check`, then handle its
+3. Replace `FastCheck.sample` with `Arbitrary.sampleEffect` and run the returned Effect.
+4. Replace `FastCheck.check` or `FastCheck.assert` for Schema-derived inputs with `Arbitrary.checkEffect`, then handle its
    structured result.
 5. Rename `@effect/vitest` options from `fastCheck` to `arbitrary` and convert `numRuns` to `runs`.
 6. Replace raw or mixed `@effect/vitest` property inputs with Schemas.

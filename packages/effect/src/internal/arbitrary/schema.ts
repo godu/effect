@@ -1,5 +1,4 @@
 import type * as BigDecimal from "../../BigDecimal.ts"
-import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
 import { identity } from "../../Function.ts"
@@ -1424,40 +1423,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.makeCompiled(
           members,
           () => Math.min(...members.map((member) => member.minCost)),
-          (state) => {
-            const eligible = members.filter((member) => member.minCost <= state.budget.remaining)
-            if (eligible.length === 0) return Model.discarded
-            const selected = eligible[Model.randomIndex(state, eligible.length)]
-            return Model.mapGeneration(selected.generate(state), (attempt) => {
-              if (!state.shrinks || attempt._tag === "Discarded") return attempt
-              let fallback = members[0]
-              for (let index = 1; index < members.length; index++) {
-                if (members[index].minCost < fallback.minCost) fallback = members[index]
-              }
-              if (fallback.minCost >= selected.minCost) return attempt
-
-              // This lazy cross-branch fallback follows fast-check v4.9.0's FrequencyArbitrary withCrossShrink idea
-              // (MIT): a value selected from a recursive branch first shrinks toward the productive base branch.
-              // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/FrequencyArbitrary.ts
-              let pulled = false
-              const fallbackPull = Effect.suspend(() => {
-                if (pulled) return Cause.done()
-                pulled = true
-                return Effect.flatMapEager(
-                  Model.toEffectGeneration(
-                    fallback.generate({ ...state, budget: { remaining: fallback.minCost } })
-                  ),
-                  (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt) : Cause.done()
-                )
-              })
-              return Model.makeSample(
-                attempt.value,
-                attempt.shrinks === undefined
-                  ? fallbackPull
-                  : Model.concatPulls([fallbackPull, attempt.shrinks])
-              )
-            })
-          }
+          (state) => Model.generateUnion(members, state)
         )
       }
       case "Arrays":

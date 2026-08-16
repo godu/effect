@@ -11,7 +11,7 @@ If you are upgrading from the fast-check bridge available in `effect@4.0.0-rc.10
 
 ## Getting Started
 
-Use `Arbitrary.schema` to derive an `Arbitrary` from the decoded `Type` of a Schema, then use `Arbitrary.sample` to
+Use `Arbitrary.schema` to derive an `Arbitrary` from the decoded `Type` of a Schema, then use `Arbitrary.sampleEffect` to
 generate values:
 
 ```ts
@@ -25,7 +25,7 @@ const Person = Schema.Struct({
 
 const people = Arbitrary.schema(Person)
 
-const program = Arbitrary.sample(people, {
+const program = Arbitrary.sampleEffect(people, {
   count: 20,
   seed: "people"
 })
@@ -36,12 +36,59 @@ await Effect.runPromise(program)
 
 The same seed, Schema, and options produce the same sequence of samples within the same implementation.
 
-`Arbitrary` is intentionally opaque. The initial API does not expose constructors such as `String`, `Array`, `map`,
-or `filter`. Schema is the public language used to describe the generated domain.
+`Arbitrary` is intentionally opaque. Schema remains the public language for primitive and structural generation;
+there is no second catalog of constructors such as `String` or `Array`. Existing Arbitraries can be composed with
+`map`, `filter`, `filterMap`, and `Union`.
+
+## Composing Arbitraries
+
+Use `map` for total transformations, `filter` for predicates or refinements, and `filterMap` when transformation can
+reject a value:
+
+```ts
+import { Result, Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+
+const integers = Arbitrary.schema(Schema.Int)
+
+const nonNegativeLabels = integers.pipe(
+  Arbitrary.filter((value) => value >= 0),
+  Arbitrary.map((value) => `integer:${value}`)
+)
+
+const positiveLabels = Arbitrary.filterMap(
+  integers,
+  (value) => value > 0 ? Result.succeed(`positive:${value}`) : Result.fail(value)
+)
+```
+
+`map` transforms the complete shrink tree. `filter` and `filterMap` discard rejected roots, while rejected shrink
+nodes are skipped and their valid descendants remain reachable. Root rejection is bounded by `maxDiscards`, so an
+impossible predicate produces `SampleError` or `Exhausted` instead of searching forever.
+
+Prefer Schema checks when they describe the domain directly. The Schema compiler may turn recognized checks into
+constructive generation, while an arbitrary-level filter must first generate a candidate and then test it.
+
+Use `Union` for static choice among existing Arbitraries:
+
+```ts
+const identifier = Arbitrary.Union([
+  Arbitrary.schema(Schema.String),
+  Arbitrary.schema(Schema.Int)
+])
+```
+
+`Union` follows the generation policy of `Schema.Union`: it selects uniformly among members compatible with the
+current recursion budget. During shrinking, a branch with a higher minimum cost first tries the earliest cheaper
+member, then continues through its own shrink tree. The array must contain at least one member.
+
+Combinator callbacks must be synchronous, deterministic, terminating, and must not mutate generated values. They may
+be evaluated again during shrinking and replay. A thrown exception remains a defect of the `Effect` returned by
+`sampleEffect` or `checkEffect`.
 
 ## Checking Properties
 
-`Arbitrary.check` evaluates a pure or Effectful property and shrinks the first failure it finds:
+`Arbitrary.checkEffect` evaluates a pure or Effectful property and shrinks the first failure it finds:
 
 ```ts
 import { Effect, Schema } from "effect"
@@ -49,7 +96,7 @@ import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const values = Arbitrary.schema(Schema.Array(Schema.Int))
 
-const program = Arbitrary.check(
+const program = Arbitrary.checkEffect(
   values,
   (input) => input.slice().reverse().reverse().every((value, index) => value === input[index]),
   { runs: 100, seed: "reverse" }
@@ -65,7 +112,7 @@ An Effectful property may use services and may fail with a typed error:
 import { Effect, Schema } from "effect"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
-const program = Arbitrary.check(
+const program = Arbitrary.checkEffect(
   Arbitrary.schema(Schema.String),
   (value) => Effect.succeed(value.length >= 0)
 )
@@ -84,8 +131,8 @@ When an Effectful property fails, `Falsified.failure` is a `PropertyError` conta
 `false` produces `ReturnedFalse`.
 
 Defects and fiber interruption are not converted into `CheckResult` values. They continue through the Effect returned
-by `check`. This means a property check can be interrupted normally by an Effect timeout, a test timeout, or its parent
-fiber.
+by `checkEffect`. This means a property check can be interrupted normally by an Effect timeout, a test timeout, or its
+parent fiber.
 
 Properties must be deterministic for the same input and environment. They must also treat generated values as
 immutable. The runner may evaluate a value more than once while shrinking or replaying, and it does not clone values or
@@ -103,12 +150,12 @@ import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 const arbitrary = Arbitrary.schema(Schema.Int)
 
 const program = Effect.gen(function*() {
-  const first = yield* Arbitrary.check(arbitrary, (value) => value < 10, {
+  const first = yield* Arbitrary.checkEffect(arbitrary, (value) => value < 10, {
     seed: "integer-bound"
   })
 
   if (first._tag === "Falsified") {
-    const replayed = yield* Arbitrary.check(
+    const replayed = yield* Arbitrary.checkEffect(
       arbitrary,
       (value) => value < 10,
       { replay: first.replay }
@@ -129,7 +176,7 @@ attempt or shrink path no longer reproduces the same failure.
 
 ## Sampling Options
 
-`Arbitrary.sample` accepts the following options:
+`Arbitrary.sampleEffect` accepts the following options:
 
 | Option        | Default                      | Meaning                                                      |
 | ------------- | ---------------------------- | ------------------------------------------------------------ |
@@ -143,7 +190,7 @@ were generated and the number of discarded attempts.
 
 ## Check Options
 
-`Arbitrary.check` accepts the following options:
+`Arbitrary.checkEffect` accepts the following options:
 
 | Option        | Default                      | Meaning                                                                |
 | ------------- | ---------------------------- | ---------------------------------------------------------------------- |

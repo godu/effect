@@ -42,7 +42,13 @@ export interface GenerationState {
 }
 
 /** @internal */
-export interface Compiled<A> {
+export interface Generator<A> {
+  readonly minCost: number
+  readonly generate: (state: GenerationState) => Generation<A>
+}
+
+/** @internal */
+export interface Compiled<A> extends Generator<A> {
   minCost: number
   recursive: boolean
   mayRecurse: boolean
@@ -240,6 +246,11 @@ export const filterSample = <A>(self: Sample<A>, predicate: (value: A) => boolea
     : Option.none()
 
 /** @internal */
+export function makeGenerator<A>(minCost: number, generate: Generator<A>["generate"]): Generator<A> {
+  return { minCost, generate }
+}
+
+/** @internal */
 export function makeCompiled<A>(
   dependencies: ReadonlyArray<Compiled<any>>,
   computeMinCost: () => number,
@@ -263,6 +274,38 @@ export function makePlaceholder<A>(): Compiled<A> {
 /** @internal */
 export const randomIndex = (state: GenerationState, length: number): number =>
   length === 1 ? 0 : randomUint32Below(state, length)
+
+/** @internal */
+export function generateUnion<A>(members: ReadonlyArray<Generator<A>>, state: GenerationState): Generation<A> {
+  const eligible = members.filter((member) => member.minCost <= state.budget.remaining)
+  if (eligible.length === 0) return discarded
+  const selected = eligible[randomIndex(state, eligible.length)]
+  return mapGeneration(selected.generate(state), (attempt) => {
+    if (!state.shrinks || attempt._tag === "Discarded") return attempt
+    let fallback = members[0]
+    for (let index = 1; index < members.length; index++) {
+      if (members[index].minCost < fallback.minCost) fallback = members[index]
+    }
+    if (fallback.minCost >= selected.minCost) return attempt
+
+    // This lazy cross-branch fallback follows fast-check v4.9.0's FrequencyArbitrary withCrossShrink idea (MIT): a
+    // value selected from a recursive branch first shrinks toward the productive base branch.
+    // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/FrequencyArbitrary.ts
+    let pulled = false
+    const fallbackPull = Effect.suspend(() => {
+      if (pulled) return Cause.done()
+      pulled = true
+      return Effect.flatMapEager(
+        toEffectGeneration(fallback.generate({ ...state, budget: { remaining: fallback.minCost } })),
+        (attempt) => attempt._tag === "Generated" ? Effect.succeed(attempt) : Cause.done()
+      )
+    })
+    return makeSample(
+      attempt.value,
+      attempt.shrinks === undefined ? fallbackPull : concatPulls([fallbackPull, attempt.shrinks])
+    )
+  })
+}
 
 const numberOfUint32Values = 0x100000000
 

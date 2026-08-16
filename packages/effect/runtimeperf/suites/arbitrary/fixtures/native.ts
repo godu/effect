@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect"
+import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import * as TestSchema from "effect/testing/TestSchema"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
@@ -25,14 +26,14 @@ const size = 10
 export const coldRecursiveFirstSample = () => ({
   run: () =>
     Effect.runSync(
-      Arbitrary.sample(Arbitrary.schema(makeTreeSchema()), { count: 1, seed, size: 1 })
+      Arbitrary.sampleEffect(Arbitrary.schema(makeTreeSchema()), { count: 1, seed, size: 1 })
     ),
   validate: validateTrees(1, 2, 2)
 })
 
 export const recursiveSample32 = () => {
   const arbitrary = Arbitrary.schema(makeTreeSchema())
-  const program = Arbitrary.sample(arbitrary, { count: 32, seed: recursiveSeed, size: 3 })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 32, seed: recursiveSeed, size: 3 })
   return {
     run: () => Effect.runSync(program),
     validate: validateTrees(32, 90, 110)
@@ -41,7 +42,7 @@ export const recursiveSample32 = () => {
 
 export const constrainedStringSample128 = () => {
   const arbitrary = Arbitrary.schema(makeConstrainedStringSchema())
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateStrings(128)
@@ -50,7 +51,7 @@ export const constrainedStringSample128 = () => {
 
 export const boundedNumberSample128 = () => {
   const arbitrary = Arbitrary.schema(Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 4 })))
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateNumbers(128)
@@ -59,7 +60,7 @@ export const boundedNumberSample128 = () => {
 
 export const uint8ArraySample128 = () => {
   const arbitrary = Arbitrary.schema(Schema.Uint8Array)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateUint8Arrays(128)
@@ -69,7 +70,7 @@ export const uint8ArraySample128 = () => {
 export const bigDecimalSample128 = () => {
   const schema = makeBigDecimalSchema()
   const arbitrary = Arbitrary.schema(schema)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateSchemaValues(schema, 128)
@@ -79,7 +80,7 @@ export const bigDecimalSample128 = () => {
 export const dateTimeUtcSample128 = () => {
   const schema = makeDateTimeUtcSchema()
   const arbitrary = Arbitrary.schema(schema)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateSchemaValues(schema, 128)
@@ -88,7 +89,7 @@ export const dateTimeUtcSample128 = () => {
 
 export const timeZoneNamedSample128 = () => {
   const arbitrary = Arbitrary.schema(Schema.TimeZoneNamed)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateSchemaValues(Schema.TimeZoneNamed, 128)
@@ -97,7 +98,7 @@ export const timeZoneNamedSample128 = () => {
 
 export const timeZoneSample128 = () => {
   const arbitrary = Arbitrary.schema(Schema.TimeZone)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateSchemaValues(Schema.TimeZone, 128)
@@ -107,7 +108,7 @@ export const timeZoneSample128 = () => {
 export const dateTimeZonedSample128 = () => {
   const schema = makeDateTimeZonedSchema()
   const arbitrary = Arbitrary.schema(schema)
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: validateSchemaValues(schema, 128)
@@ -116,7 +117,7 @@ export const dateTimeZonedSample128 = () => {
 
 export const rareFilterSample32 = () => {
   const arbitrary = Arbitrary.schema(makeRareFilterSchema())
-  const program = Arbitrary.sample(arbitrary, { count: 32, maxDiscards: 2_048, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 32, maxDiscards: 2_048, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: (values: ReadonlyArray<number>) => {
@@ -128,7 +129,7 @@ export const rareFilterSample32 = () => {
 
 export const uniqueArraySample32 = () => {
   const arbitrary = Arbitrary.schema(makeUniqueArraySchema())
-  const program = Arbitrary.sample(arbitrary, { count: 32, maxDiscards: 2_048, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 32, maxDiscards: 2_048, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: (values: ReadonlyArray<ReadonlyArray<number>>) => {
@@ -140,7 +141,7 @@ export const uniqueArraySample32 = () => {
 
 export const literalSample128 = () => {
   const arbitrary = Arbitrary.schema(Schema.Literal("value"))
-  const program = Arbitrary.sample(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: (values: ReadonlyArray<unknown>) => {
@@ -150,9 +151,84 @@ export const literalSample128 = () => {
   }
 }
 
+export const mapSample128 = () => {
+  const arbitrary = Arbitrary.map(
+    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000 }))),
+    (value) => value + 1
+  )
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value >= 1 && value <= 1_001), true)
+    }
+  }
+}
+
+export const passingFilterSample128 = () => {
+  const arbitrary = Arbitrary.filter(
+    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000 }))),
+    (value) => value >= 0
+  )
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value >= 0 && value <= 1_000), true)
+    }
+  }
+}
+
+export const selectiveFilterSample32 = () => {
+  const arbitrary = Arbitrary.filter(
+    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))),
+    (value) => value % 16 === 0
+  )
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 32, maxDiscards: 2_048, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 32)
+      assert.equal(values.every((value) => value % 16 === 0), true)
+    }
+  }
+}
+
+export const filterMapSample128 = () => {
+  const arbitrary = Arbitrary.filterMap(
+    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))),
+    (value) => value % 2 === 0 ? Result.succeed(value / 2) : Result.fail(value)
+  )
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 2_048, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => Number.isInteger(value) && value >= 0 && value <= 127), true)
+    }
+  }
+}
+
+export const unionSample128 = () => {
+  const arbitrary = Arbitrary.Union([
+    Arbitrary.schema(Schema.Literal("left")),
+    Arbitrary.schema(Schema.Literal(1))
+  ])
+  const program = Arbitrary.sampleEffect(arbitrary, { count: 128, maxDiscards: 0, seed, size })
+  return {
+    run: () => Effect.runSync(program),
+    validate: (values: ReadonlyArray<string | number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value === "left" || value === 1), true)
+    }
+  }
+}
+
 export const checkPass100 = () => {
   const arbitrary = Arbitrary.schema(Schema.Int)
-  const program = Arbitrary.check(arbitrary, () => true, { runs: 100, seed, size })
+  const program = Arbitrary.checkEffect(arbitrary, () => true, { runs: 100, seed, size })
   return {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {
@@ -173,7 +249,7 @@ export const checkFalsifyAndShrink = () => {
   const arbitrary = Arbitrary.schema(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
-  const program = Arbitrary.check(arbitrary, (value) => value < 0, { runs: 1, seed: 47, size })
+  const program = Arbitrary.checkEffect(arbitrary, (value) => value < 0, { runs: 1, seed: 47, size })
   return {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {
@@ -191,10 +267,10 @@ export const checkReplay = () => {
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
   )
   const property = (value: number) => value < 0
-  const initial = Effect.runSync(Arbitrary.check(arbitrary, property, { runs: 1, seed: 47, size }))
+  const initial = Effect.runSync(Arbitrary.checkEffect(arbitrary, property, { runs: 1, seed: 47, size }))
   assert.equal(initial._tag, "Falsified")
   if (initial._tag !== "Falsified") throw new Error("Expected the replay setup to falsify")
-  const program = Arbitrary.check(arbitrary, property, { replay: initial.replay })
+  const program = Arbitrary.checkEffect(arbitrary, property, { replay: initial.replay })
   return {
     run: () => Effect.runSync(program),
     validate: (result: Arbitrary.CheckResult<number, never>) => {

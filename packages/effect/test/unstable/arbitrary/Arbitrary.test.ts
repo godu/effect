@@ -36,7 +36,7 @@ interface SchemaCatalogEntry {
 
 const verifySchemaCatalog = Effect.fnUntraced(function*(entries: ReadonlyArray<SchemaCatalogEntry>) {
   for (const entry of entries) {
-    const result = yield* Arbitrary.check(Arbitrary.schema(entry.schema), Schema.is(entry.schema), {
+    const result = yield* Arbitrary.checkEffect(Arbitrary.schema(entry.schema), Schema.is(entry.schema), {
       runs: 100,
       maxDiscards: 200,
       seed: `schema-catalog:${entry.name}`
@@ -55,8 +55,8 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isMinLength(8), Schema.isMaxLength(8))
         const arbitrary = Arbitrary.schema(schema)
-        const first = yield* Arbitrary.sample(arbitrary, { count: 20, maxDiscards: 0, seed: "constraint" })
-        const second = yield* Arbitrary.sample(arbitrary, { count: 20, maxDiscards: 0, seed: "constraint" })
+        const first = yield* Arbitrary.sampleEffect(arbitrary, { count: 20, maxDiscards: 0, seed: "constraint" })
+        const second = yield* Arbitrary.sampleEffect(arbitrary, { count: 20, maxDiscards: 0, seed: "constraint" })
 
         assert.deepStrictEqual(first, second)
         assert.isTrue(first.every((value) => value.length === 8))
@@ -73,7 +73,7 @@ describe("Arbitrary", () => {
           Schema.String.check(Schema.isPattern(/^effect$/y))
         ]
         for (let index = 0; index < schemas.length; index++) {
-          const values = yield* Arbitrary.sample(Arbitrary.schema(schemas[index]), {
+          const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schemas[index]), {
             count: 20,
             maxDiscards: 20,
             seed: `regular-pattern-${index}`
@@ -85,7 +85,7 @@ describe("Arbitrary", () => {
     it.effect("honors dot-all and sticky regular-expression flags", () =>
       Effect.gen(function*() {
         const dotAll = Schema.String.check(Schema.isPattern(/^.$/s))
-        const dotAllValues = yield* Arbitrary.sample(Arbitrary.schema(dotAll), {
+        const dotAllValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(dotAll), {
           count: 200,
           maxDiscards: 0,
           seed: 0
@@ -94,7 +94,7 @@ describe("Arbitrary", () => {
         assert.isTrue(dotAllValues.some((value) => /[\n\r\u2028\u2029]/.test(value)))
 
         const sticky = Schema.String.check(Schema.isPattern(/a/y))
-        const stickyValues = yield* Arbitrary.sample(Arbitrary.schema(sticky), {
+        const stickyValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(sticky), {
           count: 100,
           maxDiscards: 0,
           seed: "sticky-pattern"
@@ -106,7 +106,7 @@ describe("Arbitrary", () => {
     it.effect("biases broad character classes toward common characters while exploring their full domain", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^.$/u))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 200,
           maxDiscards: 0,
           seed: "broad-character-class"
@@ -129,7 +129,7 @@ describe("Arbitrary", () => {
           Schema.String.check(Schema.isIncludes("a.b"))
         ]
         for (let index = 0; index < schemas.length; index++) {
-          const values = yield* Arbitrary.sample(Arbitrary.schema(schemas[index]), {
+          const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schemas[index]), {
             count: 20,
             maxDiscards: 100,
             seed: `built-in-pattern-${index}`
@@ -140,7 +140,7 @@ describe("Arbitrary", () => {
 
     it.effect("generates RegExp declarations without codec filtering", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.RegExp), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.RegExp), {
           count: 100,
           maxDiscards: 0,
           seed: "regexp-declaration"
@@ -154,7 +154,7 @@ describe("Arbitrary", () => {
     it.effect("generates and shrinks web URL declarations without codec filtering", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(Schema.URL)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 200,
           maxDiscards: 0,
           seed: "url-declaration",
@@ -165,7 +165,7 @@ describe("Arbitrary", () => {
         assert.deepStrictEqual(new Set(values.map((value) => value.protocol)), new Set(["http:", "https:"]))
         assert.isTrue(values.some((value) => value.pathname !== "/"))
 
-        const result = yield* Arbitrary.check(arbitrary, () => false, {
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "url-shrink",
@@ -180,7 +180,7 @@ describe("Arbitrary", () => {
 
     it.effect("generates and shrinks Date declarations constructively across their full domain", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Date), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Date), {
           count: 25_000,
           maxDiscards: 0,
           seed: "date-declaration"
@@ -198,7 +198,7 @@ describe("Arbitrary", () => {
           exclusiveMinimum: true,
           exclusiveMaximum: true
         }))
-        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+        const constrainedValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(constrained), {
           count: 500,
           maxDiscards: 0,
           seed: "date-constraints"
@@ -208,7 +208,7 @@ describe("Arbitrary", () => {
         assert.include(constrainedTimestamps, 9)
         assert.isTrue(constrainedValues.every(Schema.is(constrained)))
 
-        const result = yield* Arbitrary.check(Arbitrary.schema(Schema.Date), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Schema.Date), () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "date-shrink"
@@ -220,7 +220,7 @@ describe("Arbitrary", () => {
     it.effect("generates and shrinks BigDecimal declarations constructively", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(Schema.BigDecimal)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 500,
           maxDiscards: 0,
           seed: "big-decimal-declaration",
@@ -236,7 +236,7 @@ describe("Arbitrary", () => {
           exclusiveMinimum: true,
           exclusiveMaximum: true
         }))
-        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+        const constrainedValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(constrained), {
           count: 500,
           maxDiscards: 0,
           seed: "big-decimal-constraints",
@@ -249,7 +249,7 @@ describe("Arbitrary", () => {
           minimum: BigDecimal.make(-12_345n, 22),
           maximum: BigDecimal.make(678_901n, 24)
         }))
-        const highScaleValues = yield* Arbitrary.sample(Arbitrary.schema(highScale), {
+        const highScaleValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(highScale), {
           count: 500,
           maxDiscards: 0,
           seed: "big-decimal-high-scale-constraints",
@@ -258,7 +258,7 @@ describe("Arbitrary", () => {
 
         assert.isTrue(highScaleValues.every(Schema.is(highScale)))
 
-        const result = yield* Arbitrary.check(arbitrary, () => false, {
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "big-decimal-shrink",
@@ -273,7 +273,7 @@ describe("Arbitrary", () => {
     it.effect("generates and shrinks DateTime.Utc declarations constructively", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(Schema.DateTimeUtc)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 1_000,
           maxDiscards: 0,
           seed: "date-time-utc-declaration",
@@ -289,7 +289,7 @@ describe("Arbitrary", () => {
           exclusiveMinimum: true,
           exclusiveMaximum: true
         }))
-        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+        const constrainedValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(constrained), {
           count: 500,
           maxDiscards: 0,
           seed: "date-time-utc-constraints",
@@ -299,7 +299,7 @@ describe("Arbitrary", () => {
         assert.isTrue(constrainedValues.every(Schema.is(constrained)))
         assert.isTrue(constrainedValues.every((value) => value.epochMilliseconds > 0 && value.epochMilliseconds < 10))
 
-        const result = yield* Arbitrary.check(arbitrary, () => false, {
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "date-time-utc-shrink",
@@ -311,13 +311,13 @@ describe("Arbitrary", () => {
 
     it.effect("generates named and offset TimeZone declarations constructively", () =>
       Effect.gen(function*() {
-        const named = yield* Arbitrary.sample(Arbitrary.schema(Schema.TimeZoneNamed), {
+        const named = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.TimeZoneNamed), {
           count: 200,
           maxDiscards: 0,
           seed: "time-zone-named-declaration",
           size: 10
         })
-        const zones = yield* Arbitrary.sample(Arbitrary.schema(Schema.TimeZone), {
+        const zones = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.TimeZone), {
           count: 1_000,
           maxDiscards: 0,
           seed: "time-zone-declaration",
@@ -334,7 +334,7 @@ describe("Arbitrary", () => {
     it.effect("generates and shrinks DateTime.Zoned declarations constructively", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(Schema.DateTimeZoned)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 1_000,
           maxDiscards: 0,
           seed: "date-time-zoned-declaration",
@@ -352,7 +352,7 @@ describe("Arbitrary", () => {
           exclusiveMinimum: true,
           exclusiveMaximum: true
         }))
-        const constrainedValues = yield* Arbitrary.sample(Arbitrary.schema(constrained), {
+        const constrainedValues = yield* Arbitrary.sampleEffect(Arbitrary.schema(constrained), {
           count: 500,
           maxDiscards: 0,
           seed: "date-time-zoned-constraints",
@@ -362,7 +362,7 @@ describe("Arbitrary", () => {
         assert.isTrue(constrainedValues.every(Schema.is(constrained)))
         assert.isTrue(constrainedValues.every((value) => value.epochMilliseconds > 0 && value.epochMilliseconds < 10))
 
-        const result = yield* Arbitrary.check(arbitrary, () => false, {
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "date-time-zoned-shrink",
@@ -376,7 +376,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const schema = Schema.Uint8Array.check(Schema.isMinLength(2), Schema.isMaxLength(10))
         const arbitrary = Arbitrary.schema(schema)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 8_192,
           maxDiscards: 0,
           seed: "uint8-array-declaration",
@@ -392,7 +392,7 @@ describe("Arbitrary", () => {
         assert.include(bytes, 0)
         assert.include(bytes, 255)
 
-        const result = yield* Arbitrary.check(arbitrary, () => false, {
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: "uint8-array-shrink",
@@ -408,7 +408,7 @@ describe("Arbitrary", () => {
     it.effect("explores strings around an unanchored match", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isIncludes("needle"))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 100,
           maxDiscards: 0,
           seed: "unanchored-pattern"
@@ -427,7 +427,7 @@ describe("Arbitrary", () => {
           Schema.isMinLength(8),
           Schema.isMaxLength(12)
         )
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 100,
           maxDiscards: 0,
           seed: "pattern-length"
@@ -443,7 +443,7 @@ describe("Arbitrary", () => {
           Schema.isPattern(/^[^A-Z]*$/),
           Schema.isPattern(/^0x[0-9a-f]{40}$/)
         )
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 200,
           seed: "multiple-patterns"
@@ -458,7 +458,7 @@ describe("Arbitrary", () => {
           Schema.isPattern(/^(?=a)a$/),
           Schema.isPattern(/^a$/)
         )
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 0,
           seed: "unsupported-pattern-candidate"
@@ -470,7 +470,7 @@ describe("Arbitrary", () => {
     it.effect("bounds fallback filtering for unsupported regular expression constructs", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^(?=a)b$/))
-        const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
+        const result = yield* Effect.result(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 1,
           maxDiscards: 2,
           seed: "unsupported-pattern"
@@ -485,7 +485,7 @@ describe("Arbitrary", () => {
     it.effect("uses generic generation for permissive unsupported regular expressions", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^(?=)[ -~]*$/))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 20,
           seed: "unsupported-permissive-pattern"
@@ -509,7 +509,7 @@ describe("Arbitrary", () => {
         ]
 
         for (const schema of schemas) {
-          const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
+          const result = yield* Effect.result(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
             count: 1,
             maxDiscards: 2,
             seed: "incompatible-pattern-length"
@@ -526,7 +526,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^a+$/), Schema.isMaxLength(8))
         const evaluated: Array<string> = []
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(schema),
           (value) => {
             evaluated.push(value)
@@ -543,7 +543,7 @@ describe("Arbitrary", () => {
     it.effect("shrinks fixed-length String code units toward null", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isMinLength(3), Schema.isMaxLength(3))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
           runs: 1,
           seed: "string-code-unit-shrink",
           size: 3
@@ -559,7 +559,7 @@ describe("Arbitrary", () => {
     it.effect("structurally shrinks regular-expression repetitions", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^a*b$/), Schema.isMinLength(1), Schema.isMaxLength(8))
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(schema),
           () => false,
           { runs: 1, seed: "structural-pattern-shrink", size: 8 }
@@ -575,7 +575,7 @@ describe("Arbitrary", () => {
     it.effect("structurally shrinks regular-expression alternatives to the first one", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isPattern(/^(foo|bar|baz)$/))
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(schema),
           () => false,
           { runs: 1, seed: "structural-alternative-shrink" }
@@ -590,7 +590,7 @@ describe("Arbitrary", () => {
 
     it.effect("derives independent random streams for adjacent attempts", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(
+        const values = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))),
           { count: 1_000, maxDiscards: 0, seed: "attempt-streams" }
         )
@@ -605,7 +605,7 @@ describe("Arbitrary", () => {
           minimum: Number.MIN_SAFE_INTEGER,
           maximum: Number.MAX_SAFE_INTEGER
         }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 200,
           maxDiscards: 0,
           seed: "complete-safe-integer-range"
@@ -618,7 +618,7 @@ describe("Arbitrary", () => {
 
     it.effect("spreads bounded integer samples across the complete domain", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(
+        const values = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 7 }))),
           { count: 8_192, maxDiscards: 0, seed: "bounded-integer-buckets" }
         )
@@ -641,7 +641,7 @@ describe("Arbitrary", () => {
           maximum: 2,
           exclusiveMaximum: true
         }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 8_192,
           maxDiscards: 0,
           seed: "bounded-number-buckets"
@@ -660,7 +660,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const minimumInt = -1_000_000
         const maximumInt = 1_000_000
-        const ints = yield* Arbitrary.sample(
+        const ints = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: minimumInt, maximum: maximumInt }))),
           { count: 25_000, maxDiscards: 0, seed: "numeric-edge-bias-int" }
         )
@@ -671,7 +671,7 @@ describe("Arbitrary", () => {
 
         const minimumBigInt = -(BigInt(1) << BigInt(255))
         const maximumBigInt = (BigInt(1) << BigInt(255)) - BigInt(1)
-        const bigints = yield* Arbitrary.sample(
+        const bigints = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({
             minimum: minimumBigInt,
             maximum: maximumBigInt
@@ -691,7 +691,7 @@ describe("Arbitrary", () => {
           schema: Schema.Schema<A>,
           cardinality: (value: A) => number
         ) {
-          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+          const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
             count,
             maxDiscards: count,
             seed: "length-edge-bias",
@@ -716,7 +716,7 @@ describe("Arbitrary", () => {
     it.effect("starts progressive checks for Records with an explicit minimum property count", () =>
       Effect.gen(function*() {
         const schema = Schema.Record(Schema.String, Schema.Number).check(Schema.isMinProperties(2))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), Schema.is(schema), {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), Schema.is(schema), {
           runs: 20,
           maxDiscards: 200,
           seed: "record-min-properties-progressive"
@@ -744,7 +744,7 @@ describe("Arbitrary", () => {
           "\uDC00",
           "😀"
         ]
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.String), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.String), {
           count: 8_192,
           maxDiscards: 0,
           seed: "string-edge-corpus",
@@ -757,19 +757,19 @@ describe("Arbitrary", () => {
     it.effect("scales unconstrained String, Array, and Record sizes without hidden ceilings", () =>
       Effect.gen(function*() {
         const size = 32
-        const strings = yield* Arbitrary.sample(Arbitrary.schema(Schema.String), {
+        const strings = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.String), {
           count: 200,
           maxDiscards: 0,
           seed: "unconstrained-size",
           size
         })
-        const arrays = yield* Arbitrary.sample(Arbitrary.schema(Schema.Array(Schema.Null)), {
+        const arrays = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Array(Schema.Null)), {
           count: 200,
           maxDiscards: 0,
           seed: "unconstrained-size",
           size
         })
-        const records = yield* Arbitrary.sample(Arbitrary.schema(Schema.Record(Schema.String, Schema.Null)), {
+        const records = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Record(Schema.String, Schema.Null)), {
           count: 200,
           maxDiscards: 200,
           seed: "unconstrained-size",
@@ -783,7 +783,7 @@ describe("Arbitrary", () => {
 
     it.effect("scales the specialized Json generator with size", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Json), {
           count: 200,
           maxDiscards: 0,
           seed: "json-size",
@@ -804,7 +804,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         // This follows fast-check v4.9.0's broad edge-coverage contract without fixing exact frequencies.
         // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/test/e2e/arbitraries/DoubleArbitrary.spec.ts
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Number), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Number), {
           count: 25_000,
           maxDiscards: 0,
           seed: "numeric-edge-bias-number"
@@ -857,7 +857,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const maximum = BigInt(1) << BigInt(1024)
         const schema = Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: BigInt(0), maximum }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 0,
           seed: "arbitrary-width-bigint"
@@ -878,7 +878,7 @@ describe("Arbitrary", () => {
           exclusiveMinimum: true,
           exclusiveMaximum: true
         }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 0,
           seed: "adjacent-ieee-bounds"
@@ -890,7 +890,7 @@ describe("Arbitrary", () => {
     it.effect("preserves both signed zeros in an inclusive zero interval", () =>
       Effect.gen(function*() {
         const schema = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 0 }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 50,
           maxDiscards: 0,
           seed: "signed-zero"
@@ -915,7 +915,7 @@ describe("Arbitrary", () => {
         const isBetweenNumber = Schema.makeIsBetween({ order: Order.Number })
         for (const value of expected) {
           const schema = Schema.Number.check(isBetweenNumber({ minimum: value, maximum: value }))
-          const [sample] = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+          const [sample] = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
             count: 1,
             maxDiscards: 0,
             seed: "ieee-singleton"
@@ -930,11 +930,11 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const greaterThanOrEqualTo = Schema.makeIsGreaterThanOrEqualTo({ order: Order.Number })
         const lessThanOrEqualTo = Schema.makeIsLessThanOrEqualTo({ order: Order.Number })
-        const [positive] = yield* Arbitrary.sample(
+        const [positive] = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.Number.check(greaterThanOrEqualTo(Number.POSITIVE_INFINITY))),
           { count: 1, maxDiscards: 0, seed: "positive-infinity" }
         )
-        const [negative] = yield* Arbitrary.sample(
+        const [negative] = yield* Arbitrary.sampleEffect(
           Arbitrary.schema(Schema.Number.check(lessThanOrEqualTo(Number.NEGATIVE_INFINITY))),
           { count: 1, maxDiscards: 0, seed: "negative-infinity" }
         )
@@ -959,9 +959,9 @@ describe("Arbitrary", () => {
           values: Schema.Array(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4)),
           unique: Schema.UniqueArray(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4))
         }))
-        const sampled = yield* Arbitrary.sample(arbitrary, { count: 1, seed: "sample-check", size: 10 })
+        const sampled = yield* Arbitrary.sampleEffect(arbitrary, { count: 1, seed: "sample-check", size: 10 })
         let checked: (typeof sampled)[number] | undefined
-        yield* Arbitrary.check(arbitrary, (value) => {
+        yield* Arbitrary.checkEffect(arbitrary, (value) => {
           checked = value
           return true
         }, { runs: 1, seed: "sample-check", size: 10 })
@@ -972,7 +972,7 @@ describe("Arbitrary", () => {
     it.effect("supports unique collections", () =>
       Effect.gen(function*() {
         const schema = Schema.UniqueArray(Schema.Int).check(Schema.isMinLength(4), Schema.isMaxLength(4))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 20,
           maxDiscards: 20,
           seed: "unique"
@@ -987,7 +987,7 @@ describe("Arbitrary", () => {
           Schema.isMinLength(2),
           Schema.isMaxLength(2)
         )
-        const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
+        const result = yield* Effect.result(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 1,
           maxDiscards: 2,
           seed: "structural-unique"
@@ -1002,7 +1002,7 @@ describe("Arbitrary", () => {
     it.effect("preserves unique collections while shrinking", () =>
       Effect.gen(function*() {
         const schema = Schema.UniqueArray(Schema.Int).check(Schema.isMinLength(2), Schema.isMaxLength(4))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
           runs: 1,
           seed: "unique-shrink",
           size: 10
@@ -1025,7 +1025,7 @@ describe("Arbitrary", () => {
           record: Schema.Record(Schema.String, Schema.Int).check(Schema.isMaxProperties(3)),
           union: Schema.Union([Schema.String, Schema.Int])
         })
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 50,
           seed: "structural",
           size: 5
@@ -1040,7 +1040,7 @@ describe("Arbitrary", () => {
           Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1)),
           Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10 }))
         ).check(Schema.isMinProperties(1), Schema.isMaxProperties(1))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
           runs: 1,
           seed: "record-key-shrink",
           size: 1
@@ -1055,7 +1055,7 @@ describe("Arbitrary", () => {
           Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1)),
           Schema.Null
         ).check(Schema.isMinProperties(2), Schema.isMaxProperties(2))
-        const uniqueResult = yield* Arbitrary.check(Arbitrary.schema(uniqueSchema), () => false, {
+        const uniqueResult = yield* Arbitrary.checkEffect(Arbitrary.schema(uniqueSchema), () => false, {
           runs: 1,
           seed: "record-key-unique-shrink",
           size: 2
@@ -1071,7 +1071,7 @@ describe("Arbitrary", () => {
     it.effect("generates finite numeric template literal segments", () =>
       Effect.gen(function*() {
         const schema = Schema.TemplateLiteral([Schema.Number])
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 200,
           maxDiscards: 0,
           seed: "template-number"
@@ -1083,7 +1083,7 @@ describe("Arbitrary", () => {
     it.effect("generates finite numeric template literal union segments", () =>
       Effect.gen(function*() {
         const schema = Schema.TemplateLiteral([Schema.Union([Schema.Number, Schema.Literal("a")])])
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 200,
           maxDiscards: 0,
           seed: "template-number-union"
@@ -1094,7 +1094,7 @@ describe("Arbitrary", () => {
 
     it.effect("generates symbols", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Symbol), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Symbol), {
           count: 20,
           maxDiscards: 0,
           seed: "symbol"
@@ -1106,7 +1106,7 @@ describe("Arbitrary", () => {
     it.effect("generates Unknown and Any through Json", () =>
       Effect.gen(function*() {
         for (const schema of [Schema.Unknown, Schema.Any]) {
-          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+          const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
             count: 30,
             maxDiscards: 0,
             seed: "unknown-any",
@@ -1119,7 +1119,11 @@ describe("Arbitrary", () => {
 
     it.effect("uses the private native annotation for Json", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Json), { count: 30, seed: "json", size: 5 })
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Json), {
+          count: 30,
+          seed: "json",
+          size: 5
+        })
 
         assert.isTrue(values.every(Schema.is(Schema.Json)))
       }))
@@ -1127,7 +1131,7 @@ describe("Arbitrary", () => {
     it.effect("derives canonical declarations through their codec", () =>
       Effect.gen(function*() {
         const schema = Schema.Option(Schema.Int)
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schema), { count: 30, seed: "option", size: 5 })
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), { count: 30, seed: "option", size: 5 })
 
         assert.isTrue(values.every(Option.isOption))
         assert.isTrue(values.every(Schema.is(schema)))
@@ -1156,7 +1160,7 @@ describe("Arbitrary", () => {
           }
         }).check(Schema.isBetween({ minimum: 1, maximum: 4, exclusiveMinimum: true }))
 
-        const values = yield* Arbitrary.sample(Arbitrary.schema(declaration), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(declaration), {
           count: 100,
           maxDiscards: 0,
           seed: "to-codec-arbitrary-constraint"
@@ -1221,7 +1225,7 @@ describe("Arbitrary", () => {
           }
         )
 
-        const values = yield* Arbitrary.sample(Arbitrary.schema(A), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(A), {
           count: 100,
           maxDiscards: 0,
           seed: "mutual-to-codec-arbitrary",
@@ -1252,7 +1256,7 @@ describe("Arbitrary", () => {
           }
         )
 
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
           runs: 1,
           maxDiscards: 0,
           seed: 47
@@ -1282,7 +1286,7 @@ describe("Arbitrary", () => {
               })
             )
         })
-        const fiber = yield* Effect.forkChild(Arbitrary.sample(Arbitrary.schema(schema), {
+        const fiber = yield* Effect.forkChild(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 1,
           seed: "interrupt-asynchronous-codec"
         }))
@@ -1296,7 +1300,7 @@ describe("Arbitrary", () => {
 
     it.effect("derives JSON-canonical declarations through their codec", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.URLSearchParams), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.URLSearchParams), {
           count: 30,
           seed: "url-search-params"
         })
@@ -1321,7 +1325,7 @@ describe("Arbitrary", () => {
         ]
 
         for (const schema of schemas) {
-          const result = yield* Arbitrary.check(Arbitrary.schema(schema), Schema.is(schema), {
+          const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), Schema.is(schema), {
             runs: 20,
             maxDiscards: 0,
             seed: "structural-declarations"
@@ -1352,7 +1356,7 @@ describe("Arbitrary", () => {
         ]
 
         for (const [schema, size] of schemas) {
-          const values = yield* Arbitrary.sample(Arbitrary.schema(schema), {
+          const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
             count: 30,
             maxDiscards: 100,
             seed: "collection-to-codec-arbitrary",
@@ -1368,7 +1372,7 @@ describe("Arbitrary", () => {
           Schema.Literals(["a", "b", "c"]),
           Schema.Int
         ).check(Schema.isSizeBetween(2, 3))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
           runs: 1,
           seed: "map-key-shrinking",
           size: 10
@@ -1572,7 +1576,7 @@ describe("Arbitrary", () => {
           value: Schema.String,
           children: Schema.Array(Schema.suspend(() => Node)).check(Schema.isMaxLength(3))
         })
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Node), { count: 30, seed: "recursive", size: 5 })
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Node), { count: 30, seed: "recursive", size: 5 })
 
         assert.isTrue(values.every(Schema.is(Node)))
       }))
@@ -1588,13 +1592,13 @@ describe("Arbitrary", () => {
         const children = Schema.Array(child).check(Schema.isMinLength(1), Schema.isMaxLength(2))
         Node = Schema.Struct({ left: children, right: children })
         const arbitrary = Arbitrary.schema(Node)
-        const sampled = yield* Arbitrary.sample(arbitrary, {
+        const sampled = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 1,
           seed: "recursive-parity",
           size: 8
         })
         const checked: Array<Node> = []
-        yield* Arbitrary.check(arbitrary, (value) => {
+        yield* Arbitrary.checkEffect(arbitrary, (value) => {
           checked.push(value)
           return true
         }, { runs: 1, seed: "recursive-parity", size: 8 })
@@ -1617,7 +1621,7 @@ describe("Arbitrary", () => {
         const Node: Schema.Codec<Node> = Schema.Struct({
           children: Schema.Array(Schema.suspend(() => Node)).check(Schema.isMaxLength(3))
         })
-        const result = yield* Arbitrary.check(Arbitrary.schema(Node), () => true, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => true, {
           runs: 100,
           seed: "recursive-budget",
           size: 10
@@ -1636,7 +1640,7 @@ describe("Arbitrary", () => {
           left: Schema.Union([Schema.Null, Schema.suspend(() => Node)]),
           right: Schema.Union([Schema.Null, Schema.suspend(() => Node)])
         })
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Node), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Node), {
           count: 2_000,
           maxDiscards: 0,
           seed: "recursive-sibling-order",
@@ -1669,7 +1673,7 @@ describe("Arbitrary", () => {
             Schema.isMaxProperties(2)
           )
         ])
-        const result = yield* Arbitrary.check(Arbitrary.schema(Node), () => true, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => true, {
           runs: 100,
           seed: "recursive-record-budget",
           size: 10
@@ -1686,7 +1690,7 @@ describe("Arbitrary", () => {
         const Node: Schema.Codec<Node> = Schema.Struct({
           next: Schema.Option(Schema.suspend(() => Node))
         })
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Node), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Node), {
           count: 30,
           seed: "recursive-option",
           size: 5
@@ -1705,7 +1709,7 @@ describe("Arbitrary", () => {
             next: Schema.Union([Schema.Null, Node])
           })
         )
-        const result = yield* Arbitrary.check(Arbitrary.schema(Node), () => true, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => true, {
           runs: 2,
           maxDiscards: 0,
           seed: "recursive-base",
@@ -1735,7 +1739,7 @@ describe("Arbitrary", () => {
           left: Expression,
           right: Expression
         })
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Operation), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Operation), {
           count: 30,
           seed: "mutually-recursive",
           size: 5
@@ -1756,7 +1760,7 @@ describe("Arbitrary", () => {
           schemas.push(Schema.Union([Schema.Null, Schema.Struct({ next: suspends[index] })]))
         }
 
-        const values = yield* Arbitrary.sample(Arbitrary.schema(schemas[0]), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schemas[0]), {
           count: 1,
           maxDiscards: 0,
           seed: "deep-mutual-recursion",
@@ -1768,7 +1772,7 @@ describe("Arbitrary", () => {
 
     it.effect("derives and samples a ten-thousand-node suspend chain without overflowing", () =>
       Effect.gen(function*() {
-        const values = yield* Arbitrary.sample(Arbitrary.schema(makeSuspendChain(10_000)), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(makeSuspendChain(10_000)), {
           count: 1,
           maxDiscards: 0,
           seed: "deep-suspend-chain"
@@ -1790,7 +1794,7 @@ describe("Arbitrary", () => {
     it.effect("treats unproductive recursive union branches as empty", () =>
       Effect.gen(function*() {
         const Empty: Schema.Codec<unknown> = Schema.suspend(() => Schema.Struct({ value: Empty }))
-        const values = yield* Arbitrary.sample(Arbitrary.schema(Schema.Union([Schema.Null, Empty])), {
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Union([Schema.Null, Empty])), {
           count: 10,
           maxDiscards: 0,
           seed: "empty-recursive-branch"
@@ -1808,7 +1812,7 @@ describe("Arbitrary", () => {
     it.effect("bounds residual-filter exhaustion", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.makeFilter(() => false, { expected: "impossible" }))
-        const result = yield* Effect.result(Arbitrary.sample(Arbitrary.schema(schema), {
+        const result = yield* Effect.result(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 1,
           maxDiscards: 2,
           seed: "exhaustion"
@@ -1827,7 +1831,7 @@ describe("Arbitrary", () => {
           evaluations++
           return true
         }))
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => true, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => true, {
           runs: 1,
           seed: "single-filter-evaluation"
         })
@@ -1839,7 +1843,7 @@ describe("Arbitrary", () => {
     it.effect("interrupts a synchronous residual-filter generation loop", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.makeFilter(() => false, { expected: "impossible" }))
-        const fiber = yield* Effect.forkChild(Arbitrary.sample(Arbitrary.schema(schema), {
+        const fiber = yield* Effect.forkChild(Arbitrary.sampleEffect(Arbitrary.schema(schema), {
           count: 1,
           maxDiscards: 100_000,
           seed: "interrupt-generation"
@@ -1865,7 +1869,7 @@ describe("Arbitrary", () => {
         const arbitrary = Arbitrary.schema(schema)
         generated = 0
         const fiber = yield* Effect.forkChild(
-          Arbitrary.sample(arbitrary, {
+          Arbitrary.sampleEffect(arbitrary, {
             count,
             seed: "interrupt-successful-generation"
           }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 16))
@@ -1882,7 +1886,7 @@ describe("Arbitrary", () => {
     it.effect("interrupts deep suspended generation", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(makeSuspendChain(10_000))
-        const fiber = yield* Effect.forkChild(Arbitrary.sample(arbitrary, {
+        const fiber = yield* Effect.forkChild(Arbitrary.sampleEffect(arbitrary, {
           count: 1,
           maxDiscards: 0,
           seed: "interrupt-suspended-generation"
@@ -1896,18 +1900,196 @@ describe("Arbitrary", () => {
       }))
   })
 
-  describe("check", () => {
+  describe("combinators", () => {
+    it.effect("maps generated values and the complete shrink tree", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.schema(
+          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
+        ).pipe(
+          Arbitrary.map((value) => value * 2)
+        )
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, { runs: 1, seed: 47, size: 10 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 2_000)
+          assert.strictEqual(result.counterexample, 2)
+          assert.strictEqual(result.shrinks, 1)
+        }
+      }))
+
+    it.effect("preserves duplicate shrink positions after a non-injective map", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.map(
+          Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))),
+          () => "same"
+        )
+        let evaluations = 0
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => {
+          evaluations++
+          return false
+        }, { runs: 1, seed: 47, size: 10 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, "same")
+          assert.strictEqual(result.counterexample, "same")
+          assert.strictEqual(result.shrinks, 1)
+          assert.strictEqual(evaluations, 2)
+        }
+      }))
+
+    it.effect("bounds values rejected by filter", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.filter(Arbitrary.schema(Schema.Int), () => false)
+        const sampled = yield* Effect.result(Arbitrary.sampleEffect(arbitrary, {
+          count: 1,
+          maxDiscards: 2,
+          seed: "filter-exhaustion"
+        }))
+        const checked = yield* Arbitrary.checkEffect(arbitrary, () => true, {
+          runs: 1,
+          maxDiscards: 2,
+          seed: "filter-exhaustion"
+        })
+
+        assert.isTrue(Result.isFailure(sampled))
+        if (Result.isFailure(sampled)) {
+          assert.deepStrictEqual(sampled.failure, { _tag: "SampleError", generated: 0, discards: 3 })
+        }
+        assert.deepStrictEqual(checked, { _tag: "Exhausted", runs: 0, discards: 3 })
+      }))
+
+    it.effect("promotes accepted shrink descendants through filter", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.filter(
+          Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+          (value) => value === 100 || value === 26
+        )
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, { runs: 1, seed: 47, size: 10 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, 100)
+          assert.strictEqual(result.counterexample, 26)
+          assert.strictEqual(result.shrinks, 1)
+        }
+      }))
+
+    it.effect("transforms accepted values and discards rejected values with filterMap", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.filterMap(
+          Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+          (value) => value % 2 === 0 ? Result.succeed(`even:${value}`) : Result.fail(value)
+        )
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
+          count: 20,
+          maxDiscards: 100,
+          seed: "filter-map"
+        })
+
+        assert.strictEqual(values.length, 20)
+        assert.isTrue(values.every((value) => /^even:\d+$/.test(value)))
+      }))
+
+    it.effect("promotes transformed shrink descendants through filterMap", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.filterMap(
+          Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+          (value) => value === 100 || value === 26 ? Result.succeed(`value:${value}`) : Result.fail(value)
+        )
+        const result = yield* Arbitrary.checkEffect(arbitrary, () => false, { runs: 1, seed: 47, size: 10 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, "value:100")
+          assert.strictEqual(result.counterexample, "value:26")
+          assert.strictEqual(result.shrinks, 1)
+          const replayed = yield* Arbitrary.checkEffect(arbitrary, () => false, { replay: result.replay })
+          assert.strictEqual(replayed._tag, "Falsified")
+          if (replayed._tag === "Falsified") {
+            assert.strictEqual(replayed.initialInput, result.initialInput)
+            assert.strictEqual(replayed.counterexample, result.counterexample)
+            assert.strictEqual(replayed.shrinks, result.shrinks)
+          }
+        }
+      }))
+
+    it.effect("keeps synchronous combinator exceptions as defects", () =>
+      Effect.gen(function*() {
+        const source = Arbitrary.schema(Schema.Literal("value"))
+        const defect = (): never => {
+          throw new Error("combinator defect")
+        }
+        const arbitraries: ReadonlyArray<Arbitrary.Arbitrary<unknown>> = [
+          Arbitrary.map(source, defect),
+          Arbitrary.filter(source, defect),
+          Arbitrary.filterMap(source, defect)
+        ]
+
+        for (const arbitrary of arbitraries) {
+          const exit = yield* Effect.exit(Arbitrary.sampleEffect(arbitrary, { count: 1, seed: "combinator-defect" }))
+          assert.isTrue(Exit.hasDies(exit))
+        }
+      }))
+
+    it.effect("combines existing Arbitraries with Union", () =>
+      Effect.gen(function*() {
+        const arbitrary = Arbitrary.Union([
+          Arbitrary.schema(Schema.Literal("left")),
+          Arbitrary.schema(Schema.Literal(1))
+        ])
+        const values = yield* Arbitrary.sampleEffect(arbitrary, { count: 100, seed: "union" })
+
+        assert.isTrue(values.includes("left"))
+        assert.isTrue(values.includes(1))
+      }))
+
+    it.effect("matches Schema.Union budget and selection semantics", () =>
+      Effect.gen(function*() {
+        interface Node {
+          readonly next: Node | null
+        }
+        const Node: Schema.Codec<Node> = Schema.suspend(() =>
+          Schema.Struct({
+            next: Schema.Union([Schema.Null, Node])
+          })
+        )
+        const base = Schema.Literal("base")
+        const fromArbitraries = Arbitrary.Union([Arbitrary.schema(base), Arbitrary.schema(Node)])
+        const fromSchema = Arbitrary.schema(Schema.Union([base, Node]))
+        const atSizeZero = yield* Arbitrary.sampleEffect(fromArbitraries, {
+          count: 20,
+          maxDiscards: 0,
+          seed: "union-budget",
+          size: 0
+        })
+        const options = { count: 100, maxDiscards: 0, seed: "union-parity", size: 5 } as const
+        const actual = yield* Arbitrary.sampleEffect(fromArbitraries, options)
+        const expected = yield* Arbitrary.sampleEffect(fromSchema, options)
+
+        assert.deepStrictEqual(atSizeZero, globalThis.Array(20).fill("base"))
+        assert.deepStrictEqual(actual, expected)
+        assert.isTrue(actual.some((value) => value !== "base"))
+      }))
+
+    it("rejects an empty Union", () => {
+      assert.throws(() => Arbitrary.Union([]), /requires at least one member/)
+    })
+  })
+
+  describe("checkEffect", () => {
     it.effect("isolates generation Random from property Random", () =>
       Effect.gen(function*() {
         const arbitrary = Arbitrary.schema(Schema.Int)
         const pureInputs: Array<number> = []
         const effectfulInputs: Array<number> = []
 
-        yield* Arbitrary.check(arbitrary, (value) => {
+        yield* Arbitrary.checkEffect(arbitrary, (value) => {
           pureInputs.push(value)
           return true
         }, { runs: 20, seed: "random-isolation" })
-        yield* Arbitrary.check(arbitrary, (value) =>
+        yield* Arbitrary.checkEffect(arbitrary, (value) =>
           Effect.gen(function*() {
             effectfulInputs.push(value)
             yield* Random.next
@@ -1927,7 +2109,7 @@ describe("Arbitrary", () => {
           Schema.Struct({ next: Schema.suspend(() => Node) })
         ])
         const inputs: Array<Node> = []
-        const result = yield* Arbitrary.check(Arbitrary.schema(Node), (input) => {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), (input) => {
           inputs.push(input)
           return true
         }, {
@@ -1944,7 +2126,7 @@ describe("Arbitrary", () => {
 
     it.effect("shrinks integers to the local failure boundary", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
           (value) => value < 10,
           { runs: 100, seed: 0, size: 10 }
@@ -1958,7 +2140,7 @@ describe("Arbitrary", () => {
 
     it.effect("shrinks bounded positive BigInts toward the minimum", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 100n, maximum: 1_000n }))),
           () => false,
           { runs: 1, seed: 21 }
@@ -1973,7 +2155,7 @@ describe("Arbitrary", () => {
 
     it.effect("shrinks bounded BigInts to the local failure boundary", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 100n, maximum: 1_000n }))),
           (value) => value < 700n,
           { runs: 1, seed: 839 }
@@ -1993,7 +2175,7 @@ describe("Arbitrary", () => {
           { minimum: -1_000n, maximum: 1_000n, target: 0n }
         ] as const
         for (const { maximum, minimum, target } of cases) {
-          const result = yield* Arbitrary.check(
+          const result = yield* Arbitrary.checkEffect(
             Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum, maximum }))),
             () => false,
             { runs: 1, seed: 21 }
@@ -2009,7 +2191,7 @@ describe("Arbitrary", () => {
 
     it.effect("shrinks Numbers to the local representable failure boundary", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 4 }))),
           (value) => value < 3,
           { runs: 100, seed: 1, size: 10 }
@@ -2024,7 +2206,7 @@ describe("Arbitrary", () => {
 
     it.effect("shrinks NaN through the ordinary Number target", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(Arbitrary.schema(Schema.Number), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Schema.Number), () => false, {
           runs: 1,
           seed: 231,
           size: 10
@@ -2044,7 +2226,7 @@ describe("Arbitrary", () => {
           Schema.Null,
           Schema.Struct({ next: Schema.suspend(() => Node) })
         ])
-        const result = yield* Arbitrary.check(Arbitrary.schema(Node), () => false, {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => false, {
           runs: 1,
           seed: 1,
           size: 5
@@ -2055,7 +2237,7 @@ describe("Arbitrary", () => {
           assert.notStrictEqual(result.initialInput, null)
           assert.strictEqual(result.counterexample, null)
 
-          const replayed = yield* Arbitrary.check(Arbitrary.schema(Node), () => false, { replay: result.replay })
+          const replayed = yield* Arbitrary.checkEffect(Arbitrary.schema(Node), () => false, { replay: result.replay })
           assert.strictEqual(replayed._tag, "Falsified")
           if (replayed._tag === "Falsified") {
             assert.deepStrictEqual(replayed.initialInput, result.initialInput)
@@ -2069,7 +2251,7 @@ describe("Arbitrary", () => {
         const arbitrary = Arbitrary.schema(
           Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))
         )
-        const first = yield* Arbitrary.check(arbitrary, (value) => value < 0, {
+        const first = yield* Arbitrary.checkEffect(arbitrary, (value) => value < 0, {
           runs: 1,
           seed: "replay",
           size: 10
@@ -2080,7 +2262,7 @@ describe("Arbitrary", () => {
         assert.strictEqual(typeof first.replay, "string")
 
         const replay = `${first.replay}`
-        const replayed = yield* Arbitrary.check(arbitrary, (value) => value < 0, { replay })
+        const replayed = yield* Arbitrary.checkEffect(arbitrary, (value) => value < 0, { replay })
         assert.strictEqual(replayed._tag, "Falsified")
         if (replayed._tag !== "Falsified") return
         assert.strictEqual(replayed.runs, 1)
@@ -2094,7 +2276,7 @@ describe("Arbitrary", () => {
     it.effect("counts every tested shrink candidate against maxShrinks", () =>
       Effect.gen(function*() {
         let evaluations = 0
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
           () => {
             evaluations++
@@ -2115,11 +2297,11 @@ describe("Arbitrary", () => {
         const arbitrary = Arbitrary.schema(
           Schema.Array(Schema.Literal("value")).check(Schema.isMaxLength(3))
         )
-        const first = yield* Arbitrary.check(arbitrary, () => false, { runs: 1, seed: 1, size: 3 })
+        const first = yield* Arbitrary.checkEffect(arbitrary, () => false, { runs: 1, seed: 1, size: 3 })
         assert.strictEqual(first._tag, "Falsified")
         if (first._tag !== "Falsified") return
 
-        const replayed = yield* Arbitrary.check(arbitrary, () => false, { replay: first.replay })
+        const replayed = yield* Arbitrary.checkEffect(arbitrary, () => false, { replay: first.replay })
         assert.strictEqual(replayed._tag, "Falsified")
         if (replayed._tag !== "Falsified") return
         assert.deepStrictEqual(first.initialInput, ["value"])
@@ -2135,7 +2317,7 @@ describe("Arbitrary", () => {
         const count = 1_000
         const schema = Schema.Array(Schema.Int).check(Schema.isMinLength(count), Schema.isMaxLength(count))
         let evaluations = 0
-        const result = yield* Arbitrary.check(Arbitrary.schema(schema), () => {
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => {
           evaluations++
           return evaluations !== 1
         }, { runs: 1, seed: "wide-shrink", size: count, maxShrinks: count })
@@ -2148,7 +2330,7 @@ describe("Arbitrary", () => {
       Effect.gen(function*() {
         const shrinking = yield* Deferred.make<void>()
         let evaluations = 0
-        const fiber = yield* Effect.forkChild(Arbitrary.check(
+        const fiber = yield* Effect.forkChild(Arbitrary.checkEffect(
           Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))),
           () => {
             evaluations++
@@ -2169,7 +2351,7 @@ describe("Arbitrary", () => {
 
     it.effect("preserves typed property failures", () =>
       Effect.gen(function*() {
-        const result = yield* Arbitrary.check(
+        const result = yield* Arbitrary.checkEffect(
           Arbitrary.schema(Schema.Literal("value")),
           () => Effect.fail("property failure"),
           { runs: 1, seed: "typed-failure" }
@@ -2187,8 +2369,11 @@ describe("Arbitrary", () => {
         const pureProperty = (() => 1) as unknown as () => boolean
         const effectfulProperty = (() => Effect.succeed("yes")) as unknown as () => Effect.Effect<boolean>
 
-        const pure = yield* Arbitrary.check(arbitrary, pureProperty, { runs: 1, seed: "pure-truthy" })
-        const effectful = yield* Arbitrary.check(arbitrary, effectfulProperty, { runs: 1, seed: "effectful-truthy" })
+        const pure = yield* Arbitrary.checkEffect(arbitrary, pureProperty, { runs: 1, seed: "pure-truthy" })
+        const effectful = yield* Arbitrary.checkEffect(arbitrary, effectfulProperty, {
+          runs: 1,
+          seed: "effectful-truthy"
+        })
 
         assert.strictEqual(pure._tag, "Falsified")
         assert.strictEqual(effectful._tag, "Falsified")
@@ -2199,7 +2384,7 @@ describe("Arbitrary", () => {
     it.effect("does not turn synchronous property defects into a property result", () =>
       Effect.gen(function*() {
         const exit = yield* Effect.exit(
-          Arbitrary.check(Arbitrary.schema(Schema.Literal("value")), () => {
+          Arbitrary.checkEffect(Arbitrary.schema(Schema.Literal("value")), () => {
             throw new Error("property defect")
           }, { runs: 1, seed: "property-defect" })
         )
@@ -2210,7 +2395,7 @@ describe("Arbitrary", () => {
     it.effect("does not turn interruption into a property result", () =>
       Effect.gen(function*() {
         const exit = yield* Effect.exit(
-          Arbitrary.check(Arbitrary.schema(Schema.Literal("value")), () => Effect.interrupt, {
+          Arbitrary.checkEffect(Arbitrary.schema(Schema.Literal("value")), () => Effect.interrupt, {
             runs: 1,
             seed: "interruption"
           })

@@ -24,7 +24,7 @@ describe("Schema.Graph", () => {
       for (const type of ["directed", "undirected"] as const) {
         const schema = Schema.Graph(type, Schema.String, Schema.Number)
         const arbitrary = Arbitrary.schema(schema)
-        const values = yield* Arbitrary.sample(arbitrary, {
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
           count: 100,
           maxDiscards: 0,
           seed: `graph-${type}`
@@ -42,7 +42,7 @@ describe("Schema.Graph", () => {
       const RecursiveGraph: Schema.Codec<RecursiveGraph> = Schema.suspend(() =>
         Schema.Graph("directed", RecursiveGraph, Schema.Null)
       )
-      const values = yield* Arbitrary.sample(Arbitrary.schema(RecursiveGraph), {
+      const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(RecursiveGraph), {
         count: 30,
         maxDiscards: 0,
         seed: "recursive-graph",

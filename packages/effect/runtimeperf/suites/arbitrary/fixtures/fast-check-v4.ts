@@ -186,6 +186,63 @@ export const literalSample128 = () => {
   }
 }
 
+export const mapSample128 = () => {
+  const arbitrary = FastCheck.integer({ min: 0, max: 1_000 }).map((value) => value + 1)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value >= 1 && value <= 1_001), true)
+    }
+  }
+}
+
+export const passingFilterSample128 = () => {
+  const arbitrary = FastCheck.integer({ min: 0, max: 1_000 }).filter((value) => value >= 0)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value >= 0 && value <= 1_000), true)
+    }
+  }
+}
+
+export const selectiveFilterSample32 = () => {
+  const arbitrary = FastCheck.integer({ min: 0, max: 255 }).filter((value) => value % 16 === 0)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 32, seed }),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 32)
+      assert.equal(values.every((value) => value % 16 === 0), true)
+    }
+  }
+}
+
+export const filterMapSample128 = () => {
+  const arbitrary = FastCheck.integer({ min: 0, max: 255 })
+    .filter((value) => value % 2 === 0)
+    .map((value) => value / 2)
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: (values: ReadonlyArray<number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => Number.isInteger(value) && value >= 0 && value <= 127), true)
+    }
+  }
+}
+
+export const unionSample128 = () => {
+  const arbitrary = FastCheck.oneof(FastCheck.constant("left"), FastCheck.constant(1))
+  return {
+    run: () => FastCheck.sample(arbitrary, { numRuns: 128, seed }),
+    validate: (values: ReadonlyArray<string | number>) => {
+      assert.equal(values.length, 128)
+      assert.equal(values.every((value) => value === "left" || value === 1), true)
+    }
+  }
+}
+
 export const checkPass100 = () => {
   const arbitrary = FastCheck.integer()
   const property = FastCheck.property(arbitrary, () => true)
