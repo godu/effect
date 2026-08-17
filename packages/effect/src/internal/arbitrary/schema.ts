@@ -452,8 +452,8 @@ function builtInDeclarationLink(
   constraint: GenerationConstraint | undefined
 ): SchemaAST.Link | undefined {
   const representation = (ast.annotations as Schema.Annotations.Declaration<any> | undefined)?.representation
-  if (representation === undefined) return undefined
-  const isNullary = typeParameters.length === 0 && representation.payload === null
+  if (representation === undefined || representation.payload !== null) return undefined
+  const isNullary = typeParameters.length === 0
   switch (representation.id) {
     case "effect/schema/Json":
       return isNullary ? linkToArbitrary<Schema.Json>()(jsonSchema(), SchemaGetter.passthrough()) : undefined
@@ -537,21 +537,9 @@ function builtInDeclarationLink(
           )
         ) :
         undefined
-    case "effect/schema/ReadonlyMap": {
-      if (typeParameters.length !== 2 || representation.payload !== null) return undefined
-      const [key, value] = typeParameters
-      return collectionLink(
-        ast,
-        typeParameters,
-        arraySchema(Schema.Tuple([key, value]), {
-          minLength: constraint?.minSize,
-          maxLength: constraint?.maxSize,
-          uniqueBy: (entry) => entry[0]
-        })
-      )
-    }
+    case "effect/schema/ReadonlyMap":
     case "effect/schema/HashMap": {
-      if (typeParameters.length !== 2 || representation.payload !== null) return undefined
+      if (typeParameters.length !== 2) return undefined
       const [key, value] = typeParameters
       return collectionLink(
         ast,
@@ -563,20 +551,9 @@ function builtInDeclarationLink(
         })
       )
     }
-    case "effect/schema/ReadonlySet": {
-      if (typeParameters.length !== 1 || representation.payload !== null) return undefined
-      return collectionLink(
-        ast,
-        typeParameters,
-        arraySchema(typeParameters[0], {
-          minLength: constraint?.minSize,
-          maxLength: constraint?.maxSize,
-          uniqueBy: identity
-        })
-      )
-    }
+    case "effect/schema/ReadonlySet":
     case "effect/schema/HashSet": {
-      if (typeParameters.length !== 1 || representation.payload !== null) return undefined
+      if (typeParameters.length !== 1) return undefined
       return collectionLink(
         ast,
         typeParameters,
@@ -588,7 +565,7 @@ function builtInDeclarationLink(
       )
     }
     case "effect/schema/Chunk":
-      return typeParameters.length === 1 && representation.payload === null
+      return typeParameters.length === 1
         ? collectionLink(
           ast,
           typeParameters,
@@ -624,7 +601,8 @@ function lengthBounds(
 }
 
 function constant<A>(value: A): Model.Compiled<A> {
-  return Model.makeCompiled([], () => 0, () => Model.makeSample(value))
+  const sample = Model.makeSample(value)
+  return Model.makeCompiled([], () => 0, () => sample)
 }
 
 function replaceAt<A>(values: ReadonlyArray<A>, index: number, value: A): Array<A> {
@@ -783,7 +761,7 @@ const generateSamples = (
   children: ReadonlyArray<Model.Compiled<any>>,
   state: Model.GenerationState,
   additionalReserved = 0
-): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
+): Model.Computation<Array<Model.Sample<any>> | undefined> => {
   let reserved = additionalReserved
   let recursive: Array<number> | undefined
   for (let index = 0; index < children.length; index++) {
@@ -791,7 +769,7 @@ const generateSamples = (
     if (reserved !== infinity) reserved += child.minCost
     if (child.mayRecurse) (recursive ??= []).push(index)
   }
-  if (reserved > state.budget.remaining) return Option.none()
+  if (reserved > state.budget.remaining) return undefined
   let order: Array<number> | undefined
   if (recursive !== undefined && recursive.length > 1) {
     order = children.map((_, index) => index)
@@ -803,7 +781,7 @@ const generateSamples = (
   }
   const out = new Array<Model.Sample<any>>(children.length)
   let index = 0
-  const loop = (): Model.Computation<Option.Option<Array<Model.Sample<any>>>> => {
+  const loop = (): Model.Computation<Array<Model.Sample<any>> | undefined> => {
     while (index < children.length) {
       const childIndex = order?.[index] ?? index
       index++
@@ -812,17 +790,17 @@ const generateSamples = (
       const generated = generateWithReservedBudget(child, state, reserved)
       if (Model.isAttempt(generated)) {
         const attempt = generated
-        if (attempt._tag === "Discarded") return Option.none()
+        if (attempt._tag === "Discarded") return undefined
         out[childIndex] = attempt
         continue
       }
       return Effect.flatMapEager(generated, (attempt) => {
-        if (attempt._tag === "Discarded") return Effect.succeed(Option.none())
+        if (attempt._tag === "Discarded") return Effect.succeed(undefined)
         out[childIndex] = attempt
         return Model.toEffect(loop())
       })
     }
-    return Option.some(out)
+    return out
   }
   return loop()
 }
@@ -1337,8 +1315,10 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     nodes.push(placeholder)
     pending.push(() => {
       const checks = collectChecks(ast.checks, inherited)
-      const baseAst = ast.checks === undefined ? ast : SchemaAST.replaceChecks(ast, undefined)
       const arbitrary = resolveArbitrary(ast)
+      const baseAst = arbitrary === undefined && ast.checks !== undefined
+        ? SchemaAST.replaceChecks(ast, undefined)
+        : ast
       const base = arbitrary === undefined
         ? compileBase(baseAst, path, checks.constraint)
         : compileArbitraryAnnotation(ast, arbitrary, path)
@@ -1583,13 +1563,13 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
           () => sumCosts(parts.map((part) => part.minCost)),
           (state) =>
             Model.mapComputation(generateSamples(parts, state), (generated) => {
-              if (Option.isNone(generated)) return Model.discarded
-              const sample = arraySample(generated.value, {
-                fixedCount: generated.value.length,
+              if (generated === undefined) return Model.discarded
+              const sample = arraySample(generated, {
+                fixedCount: generated.length,
                 optionalCount: 0,
                 repeatCount: 0,
                 tailCount: 0,
-                minimum: generated.value.length
+                minimum: generated.length
               }, state.shrinks)
               return Model.mapSample(sample, (parts) => parts.map(globalThis.String).join(""))
             })
@@ -1719,7 +1699,7 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         if (uniqueBy === undefined) {
           return Model.mapComputation(
             generateSamples(selected, itemState),
-            (generated) => Option.isNone(generated) ? Model.discarded : makeAttempt(generated.value)
+            (generated) => generated === undefined ? Model.discarded : makeAttempt(generated)
           )
         }
         // The requested-length consecutive duplicate circuit breaker follows fast-check v4.9.0's ArrayArbitrary
@@ -1843,8 +1823,8 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
         return Model.flatMapComputation(
           generateSamples(named.map((property) => property.compiled), state, indexReserved),
           (samples) => {
-            if (Option.isNone(samples)) return Model.discarded
-            const entries: Array<ObjectEntry> = samples.value.map((sample, index) => ({
+            if (samples === undefined) return Model.discarded
+            const entries: Array<ObjectEntry> = samples.map((sample, index) => ({
               key: named[index].property.name,
               sample,
               removable: named[index].optional

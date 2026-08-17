@@ -1,13 +1,16 @@
-import * as Cause from "../../Cause.ts"
+import type * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
-import * as Pull from "../../Pull.ts"
+import { done } from "../core.ts"
+
+/** @internal */
+export type ShrinkPull<A> = Effect.Effect<A, Cause.Done>
 
 /** @internal */
 export interface Sample<out A> {
   readonly _tag: "Generated"
   readonly value: A
-  readonly shrinks: Pull.Pull<Attempt<A>> | undefined
+  readonly shrinks: ShrinkPull<Attempt<A>> | undefined
 }
 
 /** @internal */
@@ -112,19 +115,19 @@ export function toEffectGeneration<A>(self: Generation<A>): Effect.Effect<Attemp
 }
 
 /** @internal */
-export function pullFromArray<A>(values: ReadonlyArray<A>): Pull.Pull<A> {
+export function pullFromArray<A>(values: ReadonlyArray<A>): ShrinkPull<A> {
   let index = 0
-  return Effect.suspend(() => index >= values.length ? Cause.done() : Effect.succeed(values[index++]))
+  return Effect.suspend(() => index >= values.length ? done() : Effect.succeed(values[index++]))
 }
 
 /** @internal */
-export function concatPulls<A>(pulls: ReadonlyArray<Pull.Pull<A>>): Pull.Pull<A> {
+export function concatPulls<A>(pulls: ReadonlyArray<ShrinkPull<A>>): ShrinkPull<A> {
   let index = 0
-  const loop = (): Pull.Pull<A> =>
+  const loop = (): ShrinkPull<A> =>
     Effect.suspend(() =>
       index >= pulls.length
-        ? Cause.done()
-        : Pull.catchDone(pulls[index], () => {
+        ? done()
+        : Effect.catch(pulls[index], () => {
           index++
           return loop()
         })
@@ -133,7 +136,7 @@ export function concatPulls<A>(pulls: ReadonlyArray<Pull.Pull<A>>): Pull.Pull<A>
 }
 
 /** @internal */
-export const makeSample = <A>(value: A, shrinks?: Pull.Pull<Attempt<A>>): Sample<A> => ({
+export const makeSample = <A>(value: A, shrinks?: ShrinkPull<Attempt<A>>): Sample<A> => ({
   _tag: "Generated",
   value,
   shrinks
@@ -164,18 +167,17 @@ export function mapSample<A, B>(self: Sample<A>, f: (value: A) => B): Sample<B> 
 }
 
 function filterMapPull<A, B>(
-  source: Pull.Pull<Attempt<A>>,
+  source: ShrinkPull<Attempt<A>>,
   f: (value: A) => Computation<Option.Option<B>>
-): Pull.Pull<Attempt<B>> {
-  const queue: Array<Pull.Pull<Attempt<A>>> = [source]
-  const loop = (): Pull.Pull<Attempt<B>> =>
+): ShrinkPull<Attempt<B>> {
+  const stack: Array<ShrinkPull<Attempt<A>>> = [source]
+  const loop = (): ShrinkPull<Attempt<B>> =>
     Effect.suspend(() => {
-      const current = queue[0]
-      if (current === undefined) return Cause.done()
-      return Pull.matchEffect(current, {
-        onFailure: Effect.failCause,
-        onDone: () => {
-          queue.shift()
+      const current = stack[stack.length - 1]
+      if (current === undefined) return done()
+      return Effect.matchEffect(current, {
+        onFailure: () => {
+          stack.pop()
           return loop()
         },
         onSuccess: (attempt) => {
@@ -188,7 +190,7 @@ function filterMapPull<A, B>(
                 sample.shrinks === undefined ? undefined : filterMapPull(sample.shrinks, f)
               ))
             }
-            if (sample.shrinks !== undefined) queue.unshift(sample.shrinks)
+            if (sample.shrinks !== undefined) stack.push(sample.shrinks)
             return Effect.succeed<Attempt<B>>(discarded)
           })
         }
@@ -197,16 +199,15 @@ function filterMapPull<A, B>(
   return loop()
 }
 
-function filterPull<A>(source: Pull.Pull<Attempt<A>>, predicate: (value: A) => boolean): Pull.Pull<Attempt<A>> {
-  const queue: Array<Pull.Pull<Attempt<A>>> = [source]
-  const loop = (): Pull.Pull<Attempt<A>> =>
+function filterPull<A>(source: ShrinkPull<Attempt<A>>, predicate: (value: A) => boolean): ShrinkPull<Attempt<A>> {
+  const stack: Array<ShrinkPull<Attempt<A>>> = [source]
+  const loop = (): ShrinkPull<Attempt<A>> =>
     Effect.suspend(() => {
-      const current = queue[0]
-      if (current === undefined) return Cause.done()
-      return Pull.matchEffect(current, {
-        onFailure: Effect.failCause,
-        onDone: () => {
-          queue.shift()
+      const current = stack[stack.length - 1]
+      if (current === undefined) return done()
+      return Effect.matchEffect(current, {
+        onFailure: () => {
+          stack.pop()
           return loop()
         },
         onSuccess: (attempt) => {
@@ -218,7 +219,7 @@ function filterPull<A>(source: Pull.Pull<Attempt<A>>, predicate: (value: A) => b
               sample.shrinks === undefined ? undefined : filterPull(sample.shrinks, predicate)
             ))
           }
-          if (sample.shrinks !== undefined) queue.unshift(sample.shrinks)
+          if (sample.shrinks !== undefined) stack.push(sample.shrinks)
           return Effect.succeed<Attempt<A>>(discarded)
         }
       })
@@ -293,7 +294,7 @@ export function generateUnion<A>(members: ReadonlyArray<Generator<A>>, state: Ge
     // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/arbitrary/_internals/FrequencyArbitrary.ts
     let pulled = false
     const fallbackPull = Effect.suspend(() => {
-      if (pulled) return Cause.done()
+      if (pulled) return done()
       pulled = true
       return toEffectGeneration(fallback.generate({ ...state, budget: { remaining: fallback.minCost } }))
     })
@@ -305,6 +306,7 @@ export function generateUnion<A>(members: ReadonlyArray<Generator<A>>, state: Ge
 }
 
 const numberOfUint32Values = 0x100000000
+const numberOfDoubleValues = 0x20000000000000
 
 function randomUint32Below(state: GenerationState, rangeSize: number): number {
   // Equal-size buckets plus rejection apply the same unbiased selection principle as pure-rand v8.4.1's
@@ -335,7 +337,6 @@ export const randomInt = (state: GenerationState, minimum: number, maximum: numb
   if (minimum === maximum) return minimum
   const width = maximum - minimum + 1
   if (width <= numberOfUint32Values) return minimum + randomUint32Below(state, width)
-  const numberOfDoubleValues = 0x20000000000000
   if (width <= numberOfDoubleValues) {
     // Equal-size buckets plus rejection apply the same unbiased selection principle as pure-rand v8.4.1's uniformInt
     // (MIT), used by fast-check v4.9.0.
@@ -389,7 +390,6 @@ function makeRandomInt(minimum: number, maximum: number): (state: GenerationStat
     const randomBelow = makeRandomUint32Below(width)
     return (state) => minimum + randomBelow(state)
   }
-  const numberOfDoubleValues = 0x20000000000000
   if (width <= numberOfDoubleValues) {
     const bucketSize = Math.floor(numberOfDoubleValues / width)
     const maximumAccepted = bucketSize * width

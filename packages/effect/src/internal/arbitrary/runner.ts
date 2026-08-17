@@ -1,10 +1,8 @@
-import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
 import * as Option from "../../Option.ts"
 import { pipeArguments } from "../../Pipeable.ts"
-import * as Pull from "../../Pull.ts"
 import * as Random from "../../Random.ts"
-import * as Result from "../../Result.ts"
+import type * as Result from "../../Result.ts"
 import * as Scheduler from "../../Scheduler.ts"
 import type * as Schema from "../../Schema.ts"
 import type {
@@ -18,6 +16,7 @@ import type {
   SampleError,
   SampleOptions
 } from "../../unstable/arbitrary/Arbitrary.ts"
+import { done } from "../core.ts"
 import * as Model from "./model.ts"
 import * as Compiler from "./schema.ts"
 
@@ -234,7 +233,7 @@ export function filterMap<A, B, X>(
 ): Arbitrary<B> {
   const apply = (value: A): Option.Option<B> => {
     const result = f(value)
-    return Result.isSuccess(result) ? Option.some(result.success) : Option.none()
+    return result._tag === "Success" ? Option.some(result.success) : Option.none()
   }
   return make(Model.makeGenerator(
     self.gen.minCost,
@@ -278,21 +277,20 @@ function makeGenerationState(
 }
 
 function flatMapSourcePull<A, B>(
-  source: Pull.Pull<Model.Attempt<A>>,
+  source: Model.ShrinkPull<Model.Attempt<A>>,
   f: (value: A) => Arbitrary<B>,
   checkpoint: Model.GenerationRandom,
   state: Model.GenerationState,
   residual: number
-): Pull.Pull<Model.Attempt<B>> {
-  const queue: Array<Pull.Pull<Model.Attempt<A>>> = [source]
-  const loop = (): Pull.Pull<Model.Attempt<B>> =>
+): Model.ShrinkPull<Model.Attempt<B>> {
+  const stack: Array<Model.ShrinkPull<Model.Attempt<A>>> = [source]
+  const loop = (): Model.ShrinkPull<Model.Attempt<B>> =>
     Effect.suspend(() => {
-      const current = queue[0]
-      if (current === undefined) return Cause.done()
-      return Pull.matchEffect(current, {
-        onFailure: Effect.failCause,
-        onDone: () => {
-          queue.shift()
+      const current = stack[stack.length - 1]
+      if (current === undefined) return done()
+      return Effect.matchEffect(current, {
+        onFailure: () => {
+          stack.pop()
           return loop()
         },
         onSuccess: (sourceAttempt) => {
@@ -302,7 +300,7 @@ function flatMapSourcePull<A, B>(
           const targetState = makeGenerationState(state, checkpoint.clone(), residual + target.minCost)
           return Effect.flatMapEager(Model.toEffectGeneration(target.generate(targetState)), (attempt) => {
             if (attempt._tag === "Discarded") {
-              if (sourceSample.shrinks !== undefined) queue.unshift(sourceSample.shrinks)
+              if (sourceSample.shrinks !== undefined) stack.push(sourceSample.shrinks)
               return Effect.succeed<Model.Attempt<B>>(Model.discarded)
             }
             return Effect.succeed<Model.Attempt<B>>(
@@ -416,8 +414,8 @@ const evaluateProperty = <A, E, R>(
   })
 }
 
-const pullNext = <A>(pull: Pull.Pull<Model.Attempt<A>>): Effect.Effect<Model.Attempt<A> | undefined> =>
-  Pull.catchDone(pull, () => Effect.succeed(undefined))
+const pullNext = <A>(pull: Model.ShrinkPull<Model.Attempt<A>>): Effect.Effect<Model.Attempt<A> | undefined> =>
+  Effect.catch(pull, () => Effect.succeed(undefined))
 
 const shrink = Effect.fnUntraced(function*<A, E, R>(
   initial: Model.Sample<A>,
@@ -431,7 +429,6 @@ const shrink = Effect.fnUntraced(function*<A, E, R>(
   // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/runner/utils/PathWalker.ts
   let current = initial
   let failure = initialFailure
-  let shrinks = 0
   let inspected = 0
   const path: Array<number> = []
   while (inspected < maximum) {
@@ -455,9 +452,8 @@ const shrink = Effect.fnUntraced(function*<A, E, R>(
     }
     if (found === undefined) break
     current = found
-    shrinks++
   }
-  return { current, failure, shrinks, path }
+  return { current, failure, shrinks: path.length, path }
 })
 
 const followReplay = Effect.fnUntraced(function*<A, E, R>(

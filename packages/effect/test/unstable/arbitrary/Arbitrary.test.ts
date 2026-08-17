@@ -1648,7 +1648,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    it.effect("translates collection cardinality constraints through toCodecArbitrary", () =>
+    it.effect("translates collection cardinality constraints through canonical codecs", () =>
       Effect.gen(function*() {
         const hashSet = Schema.HashSet(Schema.Int).check(Schema.makeFilter(
           (value: HashSet.HashSet<number>) => HashSet.size(value) === 3,

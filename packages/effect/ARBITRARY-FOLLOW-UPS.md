@@ -553,9 +553,9 @@ it produces a production slice or is intentionally closed without changes.
    Chunk, are selected privately from their existing representation identities after any explicit user
    `toCodecArbitrary` hook and before canonical codec fallback. Graph remains an explicit declaration-local exception
    because it never used the palette. This records the chosen priority: protect production Schema bundles, while
-   treating Arbitrary bundle growth as a measured test-tooling tradeoff. Against `bbeb6689`, the final design measured
+   treating Arbitrary bundle growth as a measured test-tooling tradeoff. Against `bbeb6689`, the current design measures
    `config.ts` at 21.07 KB instead of 21.26 KB, `schema-toCodeDocument.ts` at 24.20 KB instead of 24.33 KB, and the
-   test-only `schema-toArbitrary.ts` at 39.55 KB instead of 33.55 KB. A temporary Schema-only fixture using ReadonlyMap,
+   test-only `schema-toArbitrary.ts` at 36.57 KB instead of 33.55 KB. A temporary Schema-only fixture using ReadonlyMap,
    HashMap, ReadonlySet, HashSet, and Chunk measured 20.36 KB instead of 20.57 KB.
 5. **Declaration type parameters are eager graph dependencies even when the selected Link ignores them.** The compiler
    compiles every type parameter and adds it to the dependency graph, although generation executes only the selected
@@ -577,9 +577,10 @@ it produces a production slice or is intentionally closed without changes.
 10. **The first shrink frontier is not fully lazy.** Several samples compute their initial candidate collection before
     the property result is known, so successful checks can pay for shrinking that is never consumed. Prototype moving
     candidate construction behind the first `Pull`, preserving order, replay, bundle size, and warm failure runtime.
-11. **Rejected-node promotion uses front-array operations.** The filter and `flatMap` promotion loops use
-    `shift`/`unshift`, which can become quadratic on deep rejected frontiers. Verify that a `push`/`pop` stack preserves
-    the current depth-first order and seeded replay before replacing it.
+11. **Resolved: rejected-node promotion uses a stack.** Filter, `filterMap`, and `flatMap` preserve the existing
+    depth-first promotion order with `push`/`pop`, avoiding quadratic front-array operations. The Arbitrary tests and
+    seeded replay tests pass, the full warm benchmark matrix reports no regression, and the combined internal cleanup
+    reduces the measured Arbitrary fixtures by 153–155 bytes gzip without changing the production fixtures.
 12. **Runtime speed does not establish generation quality.** Audit semantic-class coverage, boundary frequency,
     collision rate, shrink quality, and entropy across the Schema catalog. Add permanent generation and shrinking
     coverage for RegExp, whose compiler is too substantial to remain visible only to temporary probes.

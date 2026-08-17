@@ -16117,10 +16117,9 @@ export declare namespace Annotations {
      *
      * **Details**
      *
-     * The callback receives decoded type-parameter schemas, normalized constraints for the declaration, and a Schema
-     * factory for constructive array representations. The returned Link is preferred over canonical codec annotations
-     * by the native arbitrary compiler. Generated representation values are decoded and checked against the declaration,
-     * so the Link may be partial.
+     * The callback receives decoded type-parameter schemas and normalized constraints for the declaration. The returned
+     * Link is preferred over canonical codec annotations by the native arbitrary compiler. Generated representation
+     * values are decoded and checked against the declaration, so the Link may be partial.
      *
      * This annotation is experimental and may change while native arbitrary generation remains unstable.
      *
