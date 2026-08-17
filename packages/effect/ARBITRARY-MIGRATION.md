@@ -192,13 +192,13 @@ canonical representation is opaque or generates valid values too rarely.
 
 The migration changes where generation logic lives:
 
-| Previous `toArbitrary`                         | New `toCodecArbitrary`                                             |
-| ---------------------------------------------- | ------------------------------------------------------------------ |
-| Returns a `fast-check.Arbitrary`               | Returns a `SchemaAST.Link` through `Schema.link`.                  |
-| Receives generated arbitrary type parameters   | Receives decoded Schema type parameters.                           |
-| Receives fast-check constraints and recursion  | Receives normalized recognized constraints and a built-in palette. |
-| Manages terminal recursive branches explicitly | Leaves recursion analysis and budgets to the native compiler.      |
-| Uses arbitrary combinators                     | Uses Schema constructors, checks, and a Schema transformation.     |
+| Previous `toArbitrary`                         | New `toCodecArbitrary`                                         |
+| ---------------------------------------------- | -------------------------------------------------------------- |
+| Returns a `fast-check.Arbitrary`               | Returns a `SchemaAST.Link` through `Schema.link`.              |
+| Receives generated arbitrary type parameters   | Receives decoded Schema type parameters.                       |
+| Receives fast-check constraints and recursion  | Receives normalized constraints.                               |
+| Manages terminal recursive branches explicitly | Leaves recursion analysis and budgets to the native compiler.  |
+| Uses arbitrary combinators                     | Uses Schema constructors, checks, and a Schema transformation. |
 
 The original declaration remains authoritative. Values decoded by the Link are checked against it. Failed decodes and
 rejected values become bounded discards.

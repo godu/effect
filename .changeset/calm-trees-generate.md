@@ -24,11 +24,12 @@ factories are rejected explicitly. The compiler resolves the outermost factory i
 an inner override with `arbitrary: undefined`.
 
 Add the experimental `Schema.Annotations.toCodecArbitrary` hooks. Declarations can provide a Schema Link optimized for
-generation, while filters can contribute native semantic constraints. The callback receives a closed palette of
-constraint-aware Schema factories for Effect-owned built-ins. JSON, RegExp, URL, Date, BigDecimal, date-time, time-zone,
-byte-array, and collection declarations use these Links for constructive generation, including key-based Map
-uniqueness through the palette's Array schema, without exposing an arbitrary
-builder, registry, or second AST.
+generation, while filters can contribute native semantic constraints. The callback receives decoded type parameters
+and normalized constraints. Built-in Map, Set, HashMap, HashSet, and Chunk representations are implemented privately
+by the Arbitrary compiler, including key-based Map uniqueness. Efficient representations
+for Effect-owned JSON, RegExp, URL, Date, BigDecimal,
+date-time, time-zone, and byte-array declarations remain private to the Arbitrary compiler, keeping their generation
+sources and decoders out of production Schema bundles without exposing an arbitrary builder, registry, or second AST.
 
 Add `SchemaGetter.forbiddenEncoding`, a reusable getter for the encode side of decode-only Schema transformations.
 

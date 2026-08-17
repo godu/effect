@@ -357,9 +357,10 @@ recursion-specific annotation.
 
 For a `Schema.declare` or another opaque declaration, the compiler resolves a generation representation in this order:
 
-1. `toCodecArbitrary`;
-2. `toCodecJson`;
-3. `toCodec`.
+1. an explicit `toCodecArbitrary`;
+2. a compiler-owned representation for an Effect built-in;
+3. `toCodecJson`;
+4. `toCodec`.
 
 Most declarations with a useful canonical codec need no arbitrary-specific annotation. Add `toCodecArbitrary` only
 when the canonical representation is opaque or is statistically unsuitable for generation.
@@ -399,14 +400,12 @@ shrinking.
 The callback also receives:
 
 - decoded `typeParameters` for parametric declarations;
-- normalized recognized `constraint` values for the declaration;
-- a closed `schemas` palette for Effect-owned built-ins such as `Json`, `RegExp`, `URL`, `Date`, and `Uint8Array`.
+- normalized recognized `constraint` values for the declaration.
 
-The palette also provides `Array(Item, options)` for declaration representations backed by arrays. Its options support
-constructive length bounds and uniqueness by a selected value, such as a Map entry key.
-
-The palette lets built-ins choose efficient generation representations without exposing a constructor registry or an
-arbitrary builder to application code.
+Compiler-owned built-in representations, including the cardinality and uniqueness policies for Map, Set, HashMap,
+HashSet, and Chunk, remain private to Arbitrary. `Schema.Graph` keeps its explicit generation Link because its special
+representation is local to that declaration. Other Schema consumers do not retain the compiler-owned generation
+sources or decoders.
 
 ## Using `@effect/vitest`
 
@@ -544,15 +543,16 @@ size even when the public types remain unchanged.
 
 ### Declarations and Local Overrides
 
-- Declaration representations resolve in the order `toCodecArbitrary`, `toCodecJson`, then `toCodec`.
+- Declaration representations resolve in the order explicit `toCodecArbitrary`, compiler-owned Effect built-in,
+  `toCodecJson`, then `toCodec`.
   `toCodecJson() === undefined` means that the declaration is JSON-canonical but still opaque, so resolution stops and
   derivation fails instead of silently choosing another codec.
 - `toCodecArbitrary` returns a Schema `Link`. Its source is generated constructively, its decode may reject, and the
   original declaration remains authoritative. Invalid roots are bounded discards; invalid shrink nodes are omitted and
   valid descendants are promoted.
-- The callback receives decoded type parameters, normalized constraints, and a closed Schema palette for Effect-owned
-  declarations. `Array(Item, options)` expresses length and selector-based uniqueness for array-backed collections
-  without exposing the generator kernel or a registry.
+- The callback receives decoded type parameters and normalized constraints. Compiler-owned built-in representations,
+  including Map, Set, HashMap, HashSet, and Chunk policies, stay private to Arbitrary. `Schema.Graph` keeps its explicit
+  declaration-local generation Link.
 - The compiler may use `Order` while merging bounds, but removes it before passing the flattened constraint to a
   `toCodecArbitrary` callback. Link authors own the semantic compatibility of their representation; the original
   declaration checks turn incompatible outputs into bounded discards.

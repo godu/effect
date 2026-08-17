@@ -1,4 +1,5 @@
-import type * as BigDecimal from "../../BigDecimal.ts"
+import * as BigDecimal from "../../BigDecimal.ts"
+import * as DateTime from "../../DateTime.ts"
 import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
 import { identity } from "../../Function.ts"
@@ -7,6 +8,7 @@ import * as Option from "../../Option.ts"
 import * as Order from "../../Order.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
+import * as SchemaGetter from "../../SchemaGetter.ts"
 import * as SchemaParser from "../../SchemaParser.ts"
 import type { Arbitrary } from "../../unstable/arbitrary/Arbitrary.ts"
 import { effectIsExit } from "../effect.ts"
@@ -17,7 +19,12 @@ import * as Regexp from "./regexp.ts"
 
 type Constraint = Schema.Annotations.ToCodecArbitrary.Constraint<any>
 type GenerationConstraint = Schema.Annotations.ToCodecArbitrary.GenerationConstraint<any>
-type Schemas = Schema.Annotations.ToCodecArbitrary.Schemas
+
+interface ArrayOptions<in A> {
+  readonly minLength?: number | undefined
+  readonly maxLength?: number | undefined
+  readonly uniqueBy?: ((value: A) => unknown) | undefined
+}
 
 interface Checks {
   readonly constraint: Constraint | undefined
@@ -226,6 +233,7 @@ const bigDecimalDefaultMaxScale = 20
 const minimumTimeZoneOffset = -12 * 60 * 60 * 1000
 const maximumTimeZoneOffset = 14 * 60 * 60 * 1000
 const namedTimeZones = ["UTC", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney"] as const
+const regexpArbitraryFlags = ["g", "i", "m", "s", "u", "y"] as const
 
 function integerSchema(minimum: number, maximum: number): Schema.Codec<number> {
   return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
@@ -321,107 +329,278 @@ function timeZoneSchema(): Schema.Codec<number | string> {
   return Schema.Union([integerSchema(minimumTimeZoneOffset, maximumTimeZoneOffset), namedTimeZoneSchema()])
 }
 
-const schemas: Schemas = {
-  Array: (item, options) => {
-    const { maxLength, minLength, uniqueBy } = options ?? {}
-    let schema = Schema.Array(item)
-    if (minLength !== undefined && maxLength !== undefined) {
-      schema = schema.check(Schema.isLengthBetween(minLength, maxLength))
-    } else if (minLength !== undefined) {
-      schema = schema.check(Schema.isMinLength(minLength))
-    } else if (maxLength !== undefined) {
-      schema = schema.check(Schema.isMaxLength(maxLength))
-    }
-    if (uniqueBy !== undefined) {
-      schema = schema.check(Schema.makeFilter(
-        (values) => values.every(makeUniqueAdderBy(uniqueBy)),
-        { toCodecArbitrary: { constraint: { uniqueBy } } }
-      ))
-    }
-    return schema
-  },
-  Json: () => {
-    let schema: Schema.Codec<Schema.Json>
-    schema = Schema.Union([
-      Schema.Null,
-      Schema.Finite,
-      Schema.Boolean,
-      Schema.String,
-      Schema.Array(Schema.suspend(() => schema)),
-      Schema.Record(Schema.String, Schema.suspend(() => schema))
-    ]) as Schema.Codec<Schema.Json>
-    return schema
-  },
-  RegExp: () =>
-    Schema.Struct({
-      source: Schema.Literals([
-        "",
-        ".",
-        ".*",
-        "\\d+",
-        "\\w+",
-        "[a-z]+",
-        "[A-Z]+",
-        "[0-9]+",
-        "^[a-zA-Z0-9]+$",
-        "^\\d{4}-\\d{2}-\\d{2}$"
-      ]),
-      flags: Schema.Struct({
-        g: Schema.Boolean,
-        i: Schema.Boolean,
-        m: Schema.Boolean,
-        s: Schema.Boolean,
-        u: Schema.Boolean,
-        y: Schema.Boolean
-      })
-    }),
-  URL: () =>
-    Schema.Struct({
-      protocol: Schema.Literals(["http", "https"]),
-      label: Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/), Schema.isMinLength(1), Schema.isMaxLength(63)),
-      suffix: Schema.String.check(Schema.isPattern(/^[a-z]+$/), Schema.isMinLength(2), Schema.isMaxLength(10)),
-      path: Schema.Array(
-        Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~%-]*$/), Schema.isMaxLength(16))
-      ).check(Schema.isMaxLength(4))
-    }),
-  Date: (constraint) => {
-    const minimum = Math.max(
-      minimumDateTimestamp,
-      constraint?.minimum === undefined
-        ? minimumDateTimestamp
-        : constraint.minimum.getTime() + (constraint.exclusiveMinimum === true ? 1 : 0)
-    )
-    const maximum = Math.min(
-      maximumDateTimestamp,
-      constraint?.maximum === undefined
-        ? maximumDateTimestamp
-        : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
-    )
-    return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
-  },
-  BigDecimal: bigDecimalSchema,
-  DateTimeUtc: (constraint) => {
-    const [minimum, maximum] = dateTimeBounds(constraint, minimumDateTimestamp, maximumDateTimestamp)
-    return integerSchema(minimum, maximum)
-  },
-  TimeZoneNamed: namedTimeZoneSchema,
-  TimeZone: timeZoneSchema,
-  DateTimeZoned: (constraint) => {
-    const [minimum, maximum] = dateTimeBounds(
-      constraint,
-      minimumZonedDateTimeTimestamp,
-      maximumZonedDateTimeTimestamp
-    )
-    return Schema.Struct({
-      epochMilliseconds: integerSchema(minimum, maximum),
-      timeZone: timeZoneSchema()
+function arraySchema<S extends Schema.Constraint>(
+  item: S,
+  options?: ArrayOptions<S["Type"]> | undefined
+): Schema.$Array<S> {
+  const { maxLength, minLength, uniqueBy } = options ?? {}
+  let schema = Schema.Array(item)
+  if (minLength !== undefined && maxLength !== undefined) {
+    schema = schema.check(Schema.isLengthBetween(minLength, maxLength))
+  } else if (minLength !== undefined) {
+    schema = schema.check(Schema.isMinLength(minLength))
+  } else if (maxLength !== undefined) {
+    schema = schema.check(Schema.isMaxLength(maxLength))
+  }
+  if (uniqueBy !== undefined) {
+    schema = schema.check(Schema.makeFilter(
+      (values) => values.every(makeUniqueAdderBy(uniqueBy)),
+      { toCodecArbitrary: { constraint: { uniqueBy } } }
+    ))
+  }
+  return schema
+}
+
+function jsonSchema(): Schema.Codec<Schema.Json> {
+  let schema: Schema.Codec<Schema.Json>
+  schema = Schema.Union([
+    Schema.Null,
+    Schema.Finite,
+    Schema.Boolean,
+    Schema.String,
+    Schema.Array(Schema.suspend(() => schema)),
+    Schema.Record(Schema.String, Schema.suspend(() => schema))
+  ]) as Schema.Codec<Schema.Json>
+  return schema
+}
+
+function regexpSchema() {
+  return Schema.Struct({
+    source: Schema.Literals([
+      "",
+      ".",
+      ".*",
+      "\\d+",
+      "\\w+",
+      "[a-z]+",
+      "[A-Z]+",
+      "[0-9]+",
+      "^[a-zA-Z0-9]+$",
+      "^\\d{4}-\\d{2}-\\d{2}$"
+    ]),
+    flags: Schema.Struct({
+      g: Schema.Boolean,
+      i: Schema.Boolean,
+      m: Schema.Boolean,
+      s: Schema.Boolean,
+      u: Schema.Boolean,
+      y: Schema.Boolean
     })
-  },
-  Uint8Array: (constraint) =>
-    schemas.Array(
-      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 })),
-      constraint
-    )
+  })
+}
+
+function urlSchema() {
+  return Schema.Struct({
+    protocol: Schema.Literals(["http", "https"]),
+    label: Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/), Schema.isMinLength(1), Schema.isMaxLength(63)),
+    suffix: Schema.String.check(Schema.isPattern(/^[a-z]+$/), Schema.isMinLength(2), Schema.isMaxLength(10)),
+    path: Schema.Array(
+      Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._~%-]*$/), Schema.isMaxLength(16))
+    ).check(Schema.isMaxLength(4))
+  })
+}
+
+function dateSchema(constraint: GenerationConstraint | undefined) {
+  const minimum = Math.max(
+    minimumDateTimestamp,
+    constraint?.minimum === undefined
+      ? minimumDateTimestamp
+      : constraint.minimum.getTime() + (constraint.exclusiveMinimum === true ? 1 : 0)
+  )
+  const maximum = Math.min(
+    maximumDateTimestamp,
+    constraint?.maximum === undefined
+      ? maximumDateTimestamp
+      : constraint.maximum.getTime() - (constraint.exclusiveMaximum === true ? 1 : 0)
+  )
+  return Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+}
+
+function dateTimeUtcSchema(constraint: GenerationConstraint | undefined) {
+  const [minimum, maximum] = dateTimeBounds(constraint, minimumDateTimestamp, maximumDateTimestamp)
+  return integerSchema(minimum, maximum)
+}
+
+function dateTimeZonedSchema(constraint: GenerationConstraint | undefined) {
+  const [minimum, maximum] = dateTimeBounds(
+    constraint,
+    minimumZonedDateTimeTimestamp,
+    maximumZonedDateTimeTimestamp
+  )
+  return Schema.Struct({
+    epochMilliseconds: integerSchema(minimum, maximum),
+    timeZone: timeZoneSchema()
+  })
+}
+
+const linkToArbitrary = Schema.linkDecoding
+
+function collectionLink(
+  ast: SchemaAST.Declaration,
+  typeParameters: ReadonlyArray<Schema.Constraint>,
+  source: Schema.Constraint
+): SchemaAST.Link | undefined {
+  const get = ast.annotations?.toCodec
+  if (typeof get !== "function") return undefined
+  const link = get(typeParameters)
+  return new SchemaAST.Link(source.ast, link.transformation)
+}
+
+function builtInDeclarationLink(
+  ast: SchemaAST.Declaration,
+  typeParameters: ReadonlyArray<Schema.Constraint>,
+  constraint: GenerationConstraint | undefined
+): SchemaAST.Link | undefined {
+  const representation = (ast.annotations as Schema.Annotations.Declaration<any> | undefined)?.representation
+  if (representation === undefined) return undefined
+  const isNullary = typeParameters.length === 0 && representation.payload === null
+  switch (representation.id) {
+    case "effect/schema/Json":
+      return isNullary ? linkToArbitrary<Schema.Json>()(jsonSchema(), SchemaGetter.passthrough()) : undefined
+    case "effect/schema/MutableJson":
+      return isNullary ?
+        linkToArbitrary<Schema.MutableJson>()(
+          jsonSchema(),
+          SchemaGetter.passthrough<Schema.MutableJson, Schema.Json>({ strict: false })
+        ) :
+        undefined
+    case "effect/schema/RegExp":
+      return isNullary ?
+        linkToArbitrary<globalThis.RegExp>()(
+          regexpSchema(),
+          SchemaGetter.transform(({ flags, source }) =>
+            new globalThis.RegExp(source, regexpArbitraryFlags.filter((flag) => flags[flag]).join(""))
+          )
+        ) :
+        undefined
+    case "effect/schema/URL":
+      return isNullary ?
+        linkToArbitrary<globalThis.URL>()(
+          urlSchema(),
+          SchemaGetter.transform(({ label, path, protocol, suffix }) =>
+            new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`)
+          )
+        ) :
+        undefined
+    case "effect/schema/Date":
+      return isNullary
+        ? linkToArbitrary<globalThis.Date>()(dateSchema(constraint), SchemaGetter.Date<number>())
+        : undefined
+    case "effect/schema/BigDecimal":
+      return isNullary ?
+        linkToArbitrary<BigDecimal.BigDecimal>()(
+          bigDecimalSchema(constraint),
+          SchemaGetter.transform(({ scale, value }) => BigDecimal.make(value, scale))
+        ) :
+        undefined
+    case "effect/schema/Uint8Array":
+      return isNullary ?
+        linkToArbitrary<globalThis.Uint8Array<ArrayBufferLike>>()(
+          arraySchema(
+            Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 })),
+            constraint
+          ),
+          SchemaGetter.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>((values) =>
+            globalThis.Uint8Array.from(values)
+          )
+        ) :
+        undefined
+    case "effect/schema/DateTimeUtc":
+      return isNullary ?
+        linkToArbitrary<DateTime.Utc>()(
+          dateTimeUtcSchema(constraint),
+          SchemaGetter.transform(DateTime.makeUnsafe)
+        ) :
+        undefined
+    case "effect/schema/TimeZoneNamed":
+      return isNullary ?
+        linkToArbitrary<DateTime.TimeZone.Named>()(
+          namedTimeZoneSchema(),
+          SchemaGetter.transform(DateTime.zoneMakeNamedUnsafe)
+        ) :
+        undefined
+    case "effect/schema/TimeZone":
+      return isNullary ?
+        linkToArbitrary<DateTime.TimeZone>()(
+          timeZoneSchema(),
+          SchemaGetter.transform((value) =>
+            typeof value === "number" ? DateTime.zoneMakeOffset(value) : DateTime.zoneMakeNamedUnsafe(value)
+          )
+        ) :
+        undefined
+    case "effect/schema/DateTimeZoned":
+      return isNullary ?
+        linkToArbitrary<DateTime.Zoned>()(
+          dateTimeZonedSchema(constraint),
+          SchemaGetter.transform(({ epochMilliseconds, timeZone }) =>
+            DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone })
+          )
+        ) :
+        undefined
+    case "effect/schema/ReadonlyMap": {
+      if (typeParameters.length !== 2 || representation.payload !== null) return undefined
+      const [key, value] = typeParameters
+      return collectionLink(
+        ast,
+        typeParameters,
+        arraySchema(Schema.Tuple([key, value]), {
+          minLength: constraint?.minSize,
+          maxLength: constraint?.maxSize,
+          uniqueBy: (entry) => entry[0]
+        })
+      )
+    }
+    case "effect/schema/HashMap": {
+      if (typeParameters.length !== 2 || representation.payload !== null) return undefined
+      const [key, value] = typeParameters
+      return collectionLink(
+        ast,
+        typeParameters,
+        arraySchema(Schema.Tuple([key, value]), {
+          minLength: constraint?.minSize,
+          maxLength: constraint?.maxSize,
+          uniqueBy: (entry) => entry[0]
+        })
+      )
+    }
+    case "effect/schema/ReadonlySet": {
+      if (typeParameters.length !== 1 || representation.payload !== null) return undefined
+      return collectionLink(
+        ast,
+        typeParameters,
+        arraySchema(typeParameters[0], {
+          minLength: constraint?.minSize,
+          maxLength: constraint?.maxSize,
+          uniqueBy: identity
+        })
+      )
+    }
+    case "effect/schema/HashSet": {
+      if (typeParameters.length !== 1 || representation.payload !== null) return undefined
+      return collectionLink(
+        ast,
+        typeParameters,
+        arraySchema(typeParameters[0], {
+          minLength: constraint?.minSize,
+          maxLength: constraint?.maxSize,
+          uniqueBy: identity
+        })
+      )
+    }
+    case "effect/schema/Chunk":
+      return typeParameters.length === 1 && representation.payload === null
+        ? collectionLink(
+          ast,
+          typeParameters,
+          arraySchema(typeParameters[0], {
+            minLength: constraint?.minLength,
+            maxLength: constraint?.maxLength
+          })
+        )
+        : undefined
+    default:
+      return undefined
+  }
 }
 
 function lengthBounds(
@@ -1729,19 +1908,23 @@ export function compile<S extends Schema.Constraint>(schema: S): Model.Compiled<
     if (typeof getArbitrary === "function") {
       link = getArbitrary({
         typeParameters: parameters,
-        constraint: withoutOrder(constraint),
-        schemas
+        constraint: withoutOrder(constraint)
       })
     } else {
-      const getJson = ast.annotations?.toCodecJson
-      if (typeof getJson === "function") {
-        const jsonLink = getJson(parameters)
-        if (jsonLink === undefined) throw arbitraryError("an opaque self-canonical Declaration", path)
-        link = jsonLink
+      const builtInLink = builtInDeclarationLink(ast, parameters, withoutOrder(constraint))
+      if (builtInLink !== undefined) {
+        link = builtInLink
       } else {
-        const get = ast.annotations?.toCodec
-        if (typeof get !== "function") throw arbitraryError("an unsupported Declaration", path)
-        link = get(parameters)
+        const getJson = ast.annotations?.toCodecJson
+        if (typeof getJson === "function") {
+          const jsonLink = getJson(parameters)
+          if (jsonLink === undefined) throw arbitraryError("an opaque self-canonical Declaration", path)
+          link = jsonLink
+        } else {
+          const get = ast.annotations?.toCodec
+          if (typeof get !== "function") throw arbitraryError("an unsupported Declaration", path)
+          link = get(parameters)
+        }
       }
     }
     const target = recur(SchemaAST.toType(link.to), path)

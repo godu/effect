@@ -1409,7 +1409,7 @@ describe("Arbitrary", () => {
         }
       }))
 
-    it.effect("uses the private arbitrary annotation for Json", () =>
+    it.effect("derives Json through its built-in representation", () =>
       Effect.gen(function*() {
         const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(Schema.Json), {
           count: 30,
@@ -1418,6 +1418,28 @@ describe("Arbitrary", () => {
         })
 
         assert.isTrue(values.every(Schema.is(Schema.Json)))
+      }))
+
+    it.effect("prefers an explicit toCodecArbitrary over a built-in representation", () =>
+      Effect.gen(function*() {
+        const expected = "https://effect.website/custom"
+        const schema = Schema.URL.annotate({
+          toCodecArbitrary: () =>
+            Schema.link<URL>()(
+              Schema.Literal(expected),
+              SchemaTransformation.transform<globalThis.URL, typeof expected>({
+                decode: (value) => new URL(value),
+                encode: () => expected
+              })
+            )
+        })
+        const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
+          count: 10,
+          maxDiscards: 0,
+          seed: "built-in-explicit-arbitrary"
+        })
+
+        assert.deepStrictEqual(values.map((value) => value.href), globalThis.Array(10).fill(expected))
       }))
 
     it.effect("derives canonical declarations through their codec", () =>

@@ -1,6 +1,4 @@
 import { type Effect, hole, Result, Schema, type SchemaAST } from "effect"
-import type * as BigDecimal from "effect/BigDecimal"
-import type * as DateTime from "effect/DateTime"
 import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { describe, expect, it } from "tstyche"
 
@@ -89,47 +87,6 @@ describe("Arbitrary", () => {
           expect(input.typeParameters).type.toBe<readonly [Schema.Codec<number>]>()
           expect(input.constraint).type.toBe<
             Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Box> | undefined
-          >()
-          expect(input.schemas).type.toBe<Schema.Annotations.ToCodecArbitrary.Schemas>()
-          expect(input.schemas.Array).type.toBe<
-            <S extends Schema.Constraint>(
-              item: S,
-              options?: Schema.Annotations.ToCodecArbitrary.ArrayOptions<S["Type"]>
-            ) => Schema.$Array<S>
-          >()
-          expect(input.schemas.Date).type.toBe<
-            (
-              constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<Date> | undefined
-            ) => Schema.Codec<number>
-          >()
-          expect(input.schemas.BigDecimal).type.toBe<
-            (
-              constraint:
-                | Schema.Annotations.ToCodecArbitrary.GenerationConstraint<BigDecimal.BigDecimal>
-                | undefined
-            ) => Schema.Codec<{ readonly value: bigint; readonly scale: number }>
-          >()
-          expect(input.schemas.DateTimeUtc).type.toBe<
-            (
-              constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<DateTime.Utc> | undefined
-            ) => Schema.Codec<number>
-          >()
-          expect(input.schemas.TimeZoneNamed).type.toBe<
-            (
-              constraint:
-                | Schema.Annotations.ToCodecArbitrary.GenerationConstraint<DateTime.TimeZone.Named>
-                | undefined
-            ) => Schema.Codec<string>
-          >()
-          expect(input.schemas.TimeZone).type.toBe<
-            (
-              constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<DateTime.TimeZone> | undefined
-            ) => Schema.Codec<number | string>
-          >()
-          expect(input.schemas.DateTimeZoned).type.toBe<
-            (
-              constraint: Schema.Annotations.ToCodecArbitrary.GenerationConstraint<DateTime.Zoned> | undefined
-            ) => Schema.Codec<{ readonly epochMilliseconds: number; readonly timeZone: number | string }>
           >()
           return hole<SchemaAST.Link>()
         }

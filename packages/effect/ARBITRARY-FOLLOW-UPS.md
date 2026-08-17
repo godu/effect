@@ -62,13 +62,14 @@ Use the current branch as a baseline, then make the existing bundle regression t
    artifact;
 2. retain all 22 warm native/fast-check comparisons and the existing cold scenario;
 3. run the complete bundle comparison and record exact results for `config.ts` and `schema-toArbitrary.ts`;
-4. retain the measured `config.ts` result as an accepted cost of keeping `toCodecArbitrary` local and uniform;
+4. record the measured `config.ts` result as the initial production-bundle baseline;
 5. use the current commit as the bundle baseline for subsequent slices;
 6. run the existing Arbitrary tests, typetests, and package checks.
 
-The comparison at `6fd1d0d1` measured `config.ts` at 21.26 KB versus 21.10 KB on `main`, a 0.16 KB gzip increase. This is
-accepted: it preserves one uniform annotation protocol, and the marginal cost is small relative to a real application
-bundle. Do not introduce a URL-specific palette result or move every built-in Link into the palette to recover it.
+The comparison at `6fd1d0d1` measured `config.ts` at 21.26 KB versus 21.10 KB on `main`, a 0.16 KB gzip increase. P0
+accepted that result provisionally to avoid a URL-only special case. The later holistic Declaration-seam review resolved
+the underlying issue uniformly: Effect-owned built-in representations moved into the Arbitrary compiler, while the
+public palette was eliminated.
 
 The performance table at the P0 baseline was a historical reference, not the baseline for later slices. At that
 baseline, the recorded measurements outperformed the corresponding fast-check fixture in all 22 reported warm
@@ -546,10 +547,16 @@ it produces a production slice or is intentionally closed without changes.
    automatically seeded exhausted run can be reproduced directly. Structured discard origins, inspected-shrink counts,
    and a diagnostic mode remain excluded: they would widen the interface or add rejection-path work without a concrete
    consumer.
-4. **The public Declaration seam exposes Effect-owned compiler vocabulary.** `GenerationConstraint` is a flat bag of
-   unrelated optional fields, while `Schemas` contains both the general `Array(Item, options)` operation and named
-   Effect built-ins. Decide which portion is a real interface for third-party Declaration authors and which portion
-   should remain private implementation.
+4. **Resolved: the public Declaration seam exposes only general compiler vocabulary.** `GenerationConstraint` remains
+   a flat normalized constraint bag because third-party Links need its bounds. The callback otherwise receives only
+   decoded type-parameter Schemas. Compiler-owned built-ins, including the policies for Map, Set, HashMap, HashSet, and
+   Chunk, are selected privately from their existing representation identities after any explicit user
+   `toCodecArbitrary` hook and before canonical codec fallback. Graph remains an explicit declaration-local exception
+   because it never used the palette. This records the chosen priority: protect production Schema bundles, while
+   treating Arbitrary bundle growth as a measured test-tooling tradeoff. Against `bbeb6689`, the final design measured
+   `config.ts` at 21.07 KB instead of 21.26 KB, `schema-toCodeDocument.ts` at 24.20 KB instead of 24.33 KB, and the
+   test-only `schema-toArbitrary.ts` at 39.55 KB instead of 33.55 KB. A temporary Schema-only fixture using ReadonlyMap,
+   HashMap, ReadonlySet, HashSet, and Chunk measured 20.36 KB instead of 20.57 KB.
 5. **Declaration type parameters are eager graph dependencies even when the selected Link ignores them.** The compiler
    compiles every type parameter and adds it to the dependency graph, although generation executes only the selected
    `link.to`. Verify the phantom or unsupported parameter case, then decide whether dependencies should be derived only

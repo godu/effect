@@ -6519,7 +6519,12 @@ export function link<T>() {
   }
 }
 
-function linkToCodecArbitrary<T>() {
+/**
+ * Constructs a decode-only `SchemaAST.Link`.
+ *
+ * @internal
+ */
+export function linkDecoding<T>() {
   return <To extends Constraint>(
     to: To,
     decode: SchemaGetter.Getter<T, NoInfer<To["Type"]>>
@@ -10924,15 +10929,6 @@ export function ReadonlyMap<Key extends Constraint, Value extends Constraint>(
             encode: (map) => [...map.entries()]
           })
         ),
-      toCodecArbitrary: ({ constraint, schemas, typeParameters: [key, value] }) =>
-        linkToCodecArbitrary<globalThis.Map<Key["Type"], Value["Type"]>>()(
-          schemas.Array(Tuple([key, value]), {
-            minLength: constraint?.minSize,
-            maxLength: constraint?.maxSize,
-            uniqueBy: (entry) => entry[0]
-          }),
-          SchemaGetter.transform((entries) => new globalThis.Map(entries))
-        ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
       toFormatter: ([key, value]) => (t) => {
         const size = t.size
@@ -11121,7 +11117,7 @@ function graphToCodecArbitrary<N, E, T extends Graph_.Kind>(
   node: Codec<N>,
   edge: Codec<E>
 ) {
-  return linkToCodecArbitrary<Graph_.Graph<N, E, T>>()(
+  return linkDecoding<Graph_.Graph<N, E, T>>()(
     Union([
       Null,
       Struct({
@@ -11334,15 +11330,6 @@ export function HashMap<Key extends Constraint, Value extends Constraint>(key: K
             encode: HashMap_.toEntries
           })
         ),
-      toCodecArbitrary: ({ constraint, schemas, typeParameters: [key, value] }) =>
-        linkToCodecArbitrary<HashMap_.HashMap<Key["Type"], Value["Type"]>>()(
-          schemas.Array(Tuple([key, value]), {
-            minLength: constraint?.minSize,
-            maxLength: constraint?.maxSize,
-            uniqueBy: (entry) => entry[0]
-          }),
-          SchemaGetter.transform(HashMap_.fromIterable)
-        ),
       toEquivalence: ([key, value]) => Equal.makeCompareMap(key, value),
       toFormatter: ([key, value]) => (t) => {
         const size = HashMap_.size(t)
@@ -11451,15 +11438,6 @@ export function ReadonlySet<Value extends Constraint>(value: Value): $ReadonlySe
             encode: (set) => [...set.values()]
           })
         ),
-      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
-        linkToCodecArbitrary<globalThis.Set<Value["Type"]>>()(
-          schemas.Array(value, {
-            minLength: constraint?.minSize,
-            maxLength: constraint?.maxSize,
-            uniqueBy: identity
-          }),
-          SchemaGetter.transform((values) => new globalThis.Set(values))
-        ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
       toFormatter: ([value]) => (t) => {
         const size = t.size
@@ -11567,15 +11545,6 @@ export function HashSet<Value extends Constraint>(value: Value): HashSet<Value> 
             decode: HashSet_.fromIterable,
             encode: Arr.fromIterable
           })
-        ),
-      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
-        linkToCodecArbitrary<HashSet_.HashSet<Value["Type"]>>()(
-          schemas.Array(value, {
-            minLength: constraint?.minSize,
-            maxLength: constraint?.maxSize,
-            uniqueBy: identity
-          }),
-          SchemaGetter.transform(HashSet_.fromIterable)
         ),
       toEquivalence: ([value]) => Equal.makeCompareSet(value),
       toFormatter: ([value]) => (t) => {
@@ -11692,14 +11661,6 @@ export function Chunk<Value extends Constraint>(value: Value): Chunk<Value> {
             encode: Arr.fromIterable
           })
         ),
-      toCodecArbitrary: ({ constraint, schemas, typeParameters: [value] }) =>
-        linkToCodecArbitrary<Chunk_.Chunk<Value["Type"]>>()(
-          schemas.Array(value, {
-            minLength: constraint?.minLength,
-            maxLength: constraint?.maxLength
-          }),
-          SchemaGetter.transform(Chunk_.fromIterable)
-        ),
       toEquivalence: ([value]) => Chunk_.makeEquivalence(value),
       toFormatter: ([value]) => (t) => {
         const size = Chunk_.size(t)
@@ -11744,8 +11705,6 @@ export const ChunkReviver = InternalSchema.makeDeclarationReviver(
 export interface RegExp extends instanceOf<globalThis.RegExp> {
   readonly "Rebuild": RegExp
 }
-
-const RegExpArbitraryFlags = ["g", "i", "m", "s", "u", "y"] as const
 
 /**
  * Schema for JavaScript `RegExp` objects.
@@ -11792,13 +11751,6 @@ export const RegExp: RegExp = instanceOf(
               flags: regExp.flags
             })
         })
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<globalThis.RegExp>()(
-        schemas.RegExp(constraint),
-        SchemaGetter.transform(({ flags, source }) =>
-          new globalThis.RegExp(source, RegExpArbitraryFlags.filter((flag) => flags[flag]).join(""))
-        )
       ),
     toEquivalence: () => (a, b) => a.source === b.source && a.flags === b.flags
   }
@@ -11861,13 +11813,6 @@ export const URL: URL = instanceOf(
       link<globalThis.URL>()(
         URLString,
         SchemaTransformation.urlFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<globalThis.URL>()(
-        schemas.URL(constraint),
-        SchemaGetter.transform(({ label, path, protocol, suffix }) =>
-          new globalThis.URL(`${protocol}://${label}.${suffix}/${path.join("/")}`)
-        )
       ),
     toEquivalence: () => (a, b) => a.toString() === b.toString()
   }
@@ -11971,11 +11916,6 @@ export const Date: Date = declare(
       link<globalThis.Date>()(
         DateString,
         SchemaTransformation.dateFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<globalThis.Date>()(
-        schemas.Date(constraint),
-        SchemaGetter.Date<number>()
       )
   }
 )
@@ -12319,11 +12259,6 @@ export const BigDecimal: BigDecimal = declare(
       link<BigDecimal_.BigDecimal>()(
         BigDecimalString,
         SchemaTransformation.bigDecimalFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<BigDecimal_.BigDecimal>()(
-        schemas.BigDecimal(constraint),
-        SchemaGetter.transform(({ scale, value }) => BigDecimal_.make(value, scale))
       ),
     toFormatter: () => (bd) => BigDecimal_.format(bd),
     toEquivalence: () => BigDecimal_.Equivalence
@@ -13262,13 +13197,6 @@ export const Uint8Array: Uint8Array = instanceOf(globalThis.Uint8Array<ArrayBuff
     link<globalThis.Uint8Array<ArrayBufferLike>>()(
       Base64String,
       SchemaTransformation.uint8ArrayFromBase64String
-    ),
-  toCodecArbitrary: ({ constraint, schemas }) =>
-    linkToCodecArbitrary<globalThis.Uint8Array<ArrayBufferLike>>()(
-      schemas.Uint8Array(constraint),
-      SchemaGetter.transform<globalThis.Uint8Array<ArrayBufferLike>, ReadonlyArray<number>>((values) =>
-        globalThis.Uint8Array.from(values)
-      )
     )
 })
 
@@ -13434,11 +13362,6 @@ export const DateTimeUtc: DateTimeUtc = declare(
       link<DateTime.Utc>()(
         String,
         SchemaTransformation.dateTimeUtcFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<DateTime.Utc>()(
-        schemas.DateTimeUtc(constraint),
-        SchemaGetter.transform(DateTime.makeUnsafe)
       ),
     toFormatter: () => (utc) => utc.toString(),
     toEquivalence: () => DateTime.Equivalence
@@ -13682,11 +13605,6 @@ export const TimeZoneNamed: TimeZoneNamed = declare(
         TimeZoneNamedString,
         SchemaTransformation.timeZoneNamedFromString
       ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<DateTime.TimeZone.Named>()(
-        schemas.TimeZoneNamed(constraint),
-        SchemaGetter.transform(DateTime.zoneMakeNamedUnsafe)
-      ),
     toFormatter: () => (tz) => DateTime.zoneToString(tz),
     toEquivalence: () => (a, b) => a.id === b.id
   }
@@ -13781,13 +13699,6 @@ export const TimeZone: TimeZone = declare(
       link<DateTime.TimeZone>()(
         TimeZoneString,
         SchemaTransformation.timeZoneFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<DateTime.TimeZone>()(
-        schemas.TimeZone(constraint),
-        SchemaGetter.transform((value) =>
-          typeof value === "number" ? DateTime.zoneMakeOffset(value) : DateTime.zoneMakeNamedUnsafe(value)
-        )
       ),
     toFormatter: () => (tz) => DateTime.zoneToString(tz),
     toEquivalence: () => (a, b) => DateTime.zoneToString(a) === DateTime.zoneToString(b)
@@ -13885,13 +13796,6 @@ export const DateTimeZoned: DateTimeZoned = declare(
       link<DateTime.Zoned>()(
         DateTimeZonedString,
         SchemaTransformation.dateTimeZonedFromString
-      ),
-    toCodecArbitrary: ({ constraint, schemas }) =>
-      linkToCodecArbitrary<DateTime.Zoned>()(
-        schemas.DateTimeZoned(constraint),
-        SchemaGetter.transform(({ epochMilliseconds, timeZone }) =>
-          DateTime.makeZonedUnsafe(epochMilliseconds, { timeZone })
-        )
       ),
     toFormatter: () => (zoned) => DateTime.formatIsoZoned(zoned),
     toEquivalence: () => DateTime.Equivalence
@@ -15870,14 +15774,7 @@ export const Json: Codec<Json> = make(SchemaAST.annotate(SchemaAST.Json, {
   toCode: () => ({
     runtime: "Schema.Json",
     Type: "Schema.Json"
-  }),
-  toCodecArbitrary: (
-    { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<Json, readonly []>
-  ) =>
-    linkToCodecArbitrary<Json>()(
-      schemas.Json(constraint),
-      SchemaGetter.passthrough()
-    )
+  })
 }))
 
 /**
@@ -15942,14 +15839,7 @@ export const MutableJson: Codec<MutableJson> = make(SchemaAST.annotate(SchemaAST
   toCode: () => ({
     runtime: "Schema.MutableJson",
     Type: "Schema.MutableJson"
-  }),
-  toCodecArbitrary: (
-    { constraint, schemas }: Annotations.ToCodecArbitrary.DeclarationInput<MutableJson, readonly []>
-  ) =>
-    linkToCodecArbitrary<MutableJson>()(
-      schemas.Json(constraint),
-      SchemaTransformation.passthrough<MutableJson, Json>({ strict: false }).decode
-    )
+  })
 }))
 
 /**
@@ -16227,10 +16117,10 @@ export declare namespace Annotations {
      *
      * **Details**
      *
-     * The callback receives decoded type-parameter schemas, normalized constraints for the declaration, and Schema
-     * factories for constructive built-in representations. The returned Link is preferred over canonical codec
-     * annotations by the native arbitrary compiler. Generated representation values are decoded and checked against the
-     * declaration, so the Link may be partial.
+     * The callback receives decoded type-parameter schemas, normalized constraints for the declaration, and a Schema
+     * factory for constructive array representations. The returned Link is preferred over canonical codec annotations
+     * by the native arbitrary compiler. Generated representation values are decoded and checked against the declaration,
+     * so the Link may be partial.
      *
      * This annotation is experimental and may change while native arbitrary generation remains unstable.
      *
@@ -16355,81 +16245,6 @@ export declare namespace Annotations {
     }
 
     /**
-     * Configures an array representation used for native arbitrary generation.
-     *
-     * **Details**
-     *
-     * `uniqueBy` selects the value compared with Effect equality. The selector must be pure.
-     *
-     * @category models
-     * @since 4.0.0
-     */
-    export interface ArrayOptions<in A> {
-      readonly minLength?: number | undefined
-      readonly maxLength?: number | undefined
-      readonly uniqueBy?: ((value: A) => unknown) | undefined
-    }
-
-    /**
-     * Provides Schema factories for constructive representations of built-in declaration types.
-     *
-     * **Details**
-     *
-     * Built-in factories receive normalized constraints in the declaration's decoded domain. `Array` instead receives
-     * an item Schema and array-specific generation options. Each factory returns the Schema used as the source of an
-     * arbitrary-generation Link.
-     *
-     * @category models
-     * @since 4.0.0
-     */
-    export interface Schemas {
-      readonly Array: <S extends AnnotationSchemaConstraint>(
-        item: S,
-        options?: ArrayOptions<S["Type"]> | undefined
-      ) => $Array<S>
-      readonly Json: (constraint: GenerationConstraint<Json> | undefined) => Codec<Json>
-      readonly RegExp: (
-        constraint: GenerationConstraint<globalThis.RegExp> | undefined
-      ) => Codec<{
-        readonly source: string
-        readonly flags: {
-          readonly g: boolean
-          readonly i: boolean
-          readonly m: boolean
-          readonly s: boolean
-          readonly u: boolean
-          readonly y: boolean
-        }
-      }>
-      readonly URL: (
-        constraint: GenerationConstraint<globalThis.URL> | undefined
-      ) => Codec<{
-        readonly protocol: "http" | "https"
-        readonly label: string
-        readonly suffix: string
-        readonly path: ReadonlyArray<string>
-      }>
-      readonly Date: (constraint: GenerationConstraint<globalThis.Date> | undefined) => Codec<number>
-      readonly BigDecimal: (
-        constraint: GenerationConstraint<BigDecimal_.BigDecimal> | undefined
-      ) => Codec<{ readonly value: bigint; readonly scale: number }>
-      readonly DateTimeUtc: (constraint: GenerationConstraint<DateTime.Utc> | undefined) => Codec<number>
-      readonly TimeZoneNamed: (
-        constraint: GenerationConstraint<DateTime.TimeZone.Named> | undefined
-      ) => Codec<string>
-      readonly TimeZone: (constraint: GenerationConstraint<DateTime.TimeZone> | undefined) => Codec<number | string>
-      readonly DateTimeZoned: (
-        constraint: GenerationConstraint<DateTime.Zoned> | undefined
-      ) => Codec<{
-        readonly epochMilliseconds: number
-        readonly timeZone: number | string
-      }>
-      readonly Uint8Array: (
-        constraint: GenerationConstraint<globalThis.Uint8Array<ArrayBufferLike>> | undefined
-      ) => Codec<ReadonlyArray<number>>
-    }
-
-    /**
      * Raw constraint contribution attached to a Schema filter.
      *
      * **Details**
@@ -16466,7 +16281,6 @@ export declare namespace Annotations {
     > {
       readonly typeParameters: TypeParameters.Type<Parameters>
       readonly constraint: GenerationConstraint<T> | undefined
-      readonly schemas: Schemas
     }
 
     /**
